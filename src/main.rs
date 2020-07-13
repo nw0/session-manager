@@ -3,20 +3,15 @@
 //! A would-be terminal multiplexer.
 
 use anyhow::{Context, Result};
-use nix::pty::{openpty, Winsize};
-use nix::unistd::setsid;
+use nix::pty::Winsize;
 use signal_hook::{iterator::Signals, SIGWINCH};
-use std::fs::File;
 use std::io::{Read, Write};
-use std::os::unix::io::{FromRawFd, RawFd};
-use std::os::unix::process::CommandExt;
-use std::process::{Command, Stdio};
 use std::thread;
 use termion::get_tty;
 use termion::raw::IntoRawMode;
 
-nix::ioctl_write_ptr_bad!(win_resize, libc::TIOCSWINSZ, nix::pty::Winsize);
-nix::ioctl_none_bad!(set_controlling, libc::TIOCSCTTY);
+mod window;
+use window::Child;
 
 fn main() -> Result<()> {
     let signal = Signals::new(&[SIGWINCH])?;
@@ -60,45 +55,6 @@ fn main() -> Result<()> {
     handle.join().unwrap()
 }
 
-struct Child {
-    fd: RawFd,
-    pub file: File,
-}
-
-impl Child {
-    fn spawn(shell: &str, size: Winsize) -> Result<Child, ()> {
-        let pty = openpty(&size, None).unwrap();
-        unsafe {
-            Command::new(&shell)
-                .stdin(Stdio::from_raw_fd(pty.slave))
-                .stdout(Stdio::from_raw_fd(pty.slave))
-                .stderr(Stdio::from_raw_fd(pty.slave))
-                .pre_exec(|| {
-                    setsid().unwrap();
-                    set_controlling(0).unwrap();
-                    Ok(())
-                })
-                .spawn()
-                .map_err(|_| ())
-                .and_then(|_| {
-                    let child = Child {
-                        fd: pty.master,
-                        file: File::from_raw_fd(pty.master),
-                    };
-
-                    child.resize(size)?;
-
-                    Ok(child)
-                })
-        }
-    }
-
-    pub fn resize(&self, size: Winsize) -> Result<(), ()> {
-        unsafe { win_resize(self.fd, &size) }
-            .map(|_| ())
-            .map_err(|_| ())
-    }
-}
 
 pub fn get_term_size() -> Result<Winsize> {
     let (cols, rows) = termion::terminal_size()?;
