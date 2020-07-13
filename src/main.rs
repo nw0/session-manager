@@ -2,6 +2,7 @@
 //!
 //! A would-be terminal multiplexer.
 
+use anyhow::{Context, Result};
 use nix::pty::{openpty, Winsize};
 use nix::unistd::setsid;
 use signal_hook::{iterator::Signals, SIGWINCH};
@@ -17,44 +18,46 @@ use termion::raw::IntoRawMode;
 nix::ioctl_write_ptr_bad!(win_resize, libc::TIOCSWINSZ, nix::pty::Winsize);
 nix::ioctl_none_bad!(set_controlling, libc::TIOCSCTTY);
 
-fn main() {
-    let signal = Signals::new(&[SIGWINCH]).unwrap();
+fn main() -> Result<()> {
+    let signal = Signals::new(&[SIGWINCH])?;
 
-    let mut tty_output = get_tty().unwrap().into_raw_mode().unwrap();
-    let mut tty_input = tty_output.try_clone().unwrap();
+    let mut tty_output = get_tty()?.into_raw_mode()?;
+    let mut tty_input = tty_output.try_clone()?;
 
-    let child = Child::spawn(&get_shell(), get_term_size()).unwrap();
-    let mut pty_output = child.file.try_clone().unwrap();
-    let mut pty_input = child.file.try_clone().unwrap();
+    let child = Child::spawn(&get_shell(), get_term_size()?).unwrap();
+    let mut pty_output = child.file.try_clone()?;
+    let mut pty_input = child.file.try_clone()?;
 
     let handle = thread::spawn(move || loop {
         let mut packet = [0; 4096];
-        let count = pty_input.read(&mut packet).unwrap(); // TODO: handle connection drop
+        let count = pty_input.read(&mut packet).context("pty closed")?; // TODO: don't error
         let read = &packet[..count];
-        tty_output.write_all(&read).unwrap();
-        tty_output.flush().unwrap();
+        tty_output.write_all(&read)?;
+        tty_output.flush()?;
     });
 
-    thread::spawn(move || loop {
-        let mut packet = [0; 4096];
-        let count = tty_input.read(&mut packet).unwrap();
-        let read = &packet[..count];
-        if read.len() == 1 && read[0] == 0x18 {
-            // capture C-x for control
-            // TODO
-        } else {
-            pty_output.write_all(&read).unwrap();
-            pty_output.flush().unwrap();
+    thread::spawn(move || -> Result<()> {
+        loop {
+            let mut packet = [0; 4096];
+            let count = tty_input.read(&mut packet)?;
+            let read = &packet[..count];
+            if read.len() == 1 && read[0] == 0x18 {
+                // capture C-x for control
+                // TODO
+            } else {
+                pty_output.write_all(&read)?;
+                pty_output.flush()?;
+            }
         }
     });
 
-    thread::spawn(move || loop {
-        for _ in signal.forever() {
-            child.resize(get_term_size()).unwrap();
-        }
+    thread::spawn(move || -> Result<()> {
+        Ok(for _ in signal.forever() {
+            child.resize(get_term_size()?).unwrap();
+        })
     });
 
-    handle.join().unwrap();
+    handle.join().unwrap()
 }
 
 struct Child {
@@ -97,14 +100,14 @@ impl Child {
     }
 }
 
-pub fn get_term_size() -> Winsize {
-    let (cols, rows) = termion::terminal_size().unwrap();
-    Winsize {
+pub fn get_term_size() -> Result<Winsize> {
+    let (cols, rows) = termion::terminal_size()?;
+    Ok(Winsize {
         ws_row: rows,
         ws_col: cols,
         ws_xpixel: 0,
         ws_ypixel: 0,
-    }
+    })
 }
 
 /// Return the path to the shell executable.
