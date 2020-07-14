@@ -51,3 +51,30 @@ impl ChildPty {
             .map_err(|_| ())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn open_child_pty() {
+        use std::io::Read;
+        use std::path::Path;
+        use std::str;
+
+        let mut child = ChildPty::new(
+            "pwd",
+            Winsize {
+                ws_row: 24,
+                ws_col: 80,
+                ws_xpixel: 0,
+                ws_ypixel: 0,
+            },
+        )
+        .unwrap();
+        let mut buffer = [0; 1024];
+        let count = child.file.read(&mut buffer).unwrap();
+        let data = str::from_utf8(&buffer[..count]).unwrap().trim();
+        assert_eq!(Path::new(&data), std::env::current_dir().unwrap());
+    }
+}
