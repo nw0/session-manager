@@ -11,7 +11,7 @@ use termion::get_tty;
 use termion::raw::IntoRawMode;
 
 mod window;
-use window::Child;
+use window::ChildPty;
 
 fn main() -> Result<()> {
     let signal = Signals::new(&[SIGWINCH])?;
@@ -19,7 +19,7 @@ fn main() -> Result<()> {
     let mut tty_output = get_tty()?.into_raw_mode()?;
     let mut tty_input = tty_output.try_clone()?;
 
-    let child = Child::spawn(&get_shell(), get_term_size()?).unwrap();
+    let child = ChildPty::new(&get_shell(), get_term_size()?).unwrap();
     let mut pty_output = child.file.try_clone()?;
     let mut pty_input = child.file.try_clone()?;
 
@@ -54,7 +54,6 @@ fn main() -> Result<()> {
 
     handle.join().unwrap()
 }
-
 
 pub fn get_term_size() -> Result<Winsize> {
     let (cols, rows) = termion::terminal_size()?;

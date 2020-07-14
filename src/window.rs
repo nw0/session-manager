@@ -1,6 +1,6 @@
 //! Structures and functions to manage windows.
 
-use anyhow::{Result};
+use anyhow::Result;
 use nix::pty::{openpty, Winsize};
 use nix::unistd::setsid;
 use std::fs::File;
@@ -11,13 +11,14 @@ use std::process::{Command, Stdio};
 nix::ioctl_write_ptr_bad!(win_resize, libc::TIOCSWINSZ, nix::pty::Winsize);
 nix::ioctl_none_bad!(set_controlling, libc::TIOCSCTTY);
 
-pub struct Child {
+/// A pty.
+pub struct ChildPty {
     fd: RawFd,
     pub file: File,
 }
 
-impl Child {
-    pub fn spawn(shell: &str, size: Winsize) -> Result<Child, ()> {
+impl ChildPty {
+    pub fn new(shell: &str, size: Winsize) -> Result<ChildPty, ()> {
         let pty = openpty(&size, None).unwrap();
         unsafe {
             Command::new(&shell)
@@ -32,7 +33,7 @@ impl Child {
                 .spawn()
                 .map_err(|_| ())
                 .and_then(|_| {
-                    let child = Child {
+                    let child = ChildPty {
                         fd: pty.master,
                         file: File::from_raw_fd(pty.master),
                     };
