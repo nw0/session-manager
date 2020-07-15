@@ -13,7 +13,7 @@ nix::ioctl_none_bad!(set_controlling, libc::TIOCSCTTY);
 
 /// Window: a buffer and a pty.
 pub struct Window {
-    child_pty: ChildPty,
+    pub child_pty: ChildPty,
 }
 
 impl Window {
@@ -33,7 +33,7 @@ impl Window {
 }
 
 /// A pty.
-struct ChildPty {
+pub struct ChildPty {
     fd: RawFd,
     pub file: File,
 }

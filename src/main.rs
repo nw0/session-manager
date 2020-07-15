@@ -30,6 +30,7 @@ fn main() -> Result<()> {
         }
         Ok(())
     });
+    let child_pty = child.child_pty;
 
     thread::spawn(move || -> Result<()> {
         loop {
@@ -48,7 +49,7 @@ fn main() -> Result<()> {
 
     thread::spawn(move || -> Result<()> {
         Ok(for _ in signal.forever() {
-            child.resize(get_term_size()?).unwrap();
+            child_pty.resize(get_term_size()?).unwrap();
         })
     });
 
