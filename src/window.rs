@@ -11,8 +11,29 @@ use std::process::{Command, Stdio};
 nix::ioctl_write_ptr_bad!(win_resize, libc::TIOCSWINSZ, nix::pty::Winsize);
 nix::ioctl_none_bad!(set_controlling, libc::TIOCSCTTY);
 
+/// Window: a buffer and a pty.
+pub struct Window {
+    child_pty: ChildPty,
+}
+
+impl Window {
+    pub fn new(command: &str, size: Winsize) -> Result<Window, ()> {
+        Ok(Window {
+            child_pty: ChildPty::new(command, size)?,
+        })
+    }
+
+    pub fn get_file(&self) -> &File {
+        &self.child_pty.file
+    }
+
+    pub fn resize(&self, size: Winsize) -> Result<(), ()> {
+        self.child_pty.resize(size)
+    }
+}
+
 /// A pty.
-pub struct ChildPty {
+struct ChildPty {
     fd: RawFd,
     pub file: File,
 }

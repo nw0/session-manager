@@ -11,7 +11,7 @@ use termion::get_tty;
 use termion::raw::IntoRawMode;
 
 mod window;
-use window::ChildPty;
+use window::Window;
 
 fn main() -> Result<()> {
     let signal = Signals::new(&[SIGWINCH])?;
@@ -19,9 +19,9 @@ fn main() -> Result<()> {
     let mut tty_output = get_tty()?.into_raw_mode()?;
     let mut tty_input = tty_output.try_clone()?;
 
-    let child = ChildPty::new(&get_shell(), get_term_size()?).unwrap();
-    let mut pty_output = child.file.try_clone()?;
-    let mut pty_input = child.file.try_clone()?;
+    let child = Window::new(&get_shell(), get_term_size()?).unwrap();
+    let mut pty_output = child.get_file().try_clone()?;
+    let mut pty_input = child.get_file().try_clone()?;
 
     let handle = thread::spawn(move || loop {
         let mut packet = [0; 4096];
