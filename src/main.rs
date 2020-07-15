@@ -2,7 +2,7 @@
 //!
 //! A would-be terminal multiplexer.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use nix::pty::Winsize;
 use signal_hook::{iterator::Signals, SIGWINCH};
 use std::io::{Read, Write};
@@ -21,14 +21,14 @@ fn main() -> Result<()> {
 
     let child = Window::new(&get_shell(), get_term_size()?).unwrap();
     let mut pty_output = child.get_file().try_clone()?;
-    let mut pty_input = child.get_file().try_clone()?;
+    let mut child_input = child.get_file().try_clone()?.bytes();
 
-    let handle = thread::spawn(move || loop {
-        let mut packet = [0; 4096];
-        let count = pty_input.read(&mut packet).context("pty closed")?; // TODO: don't error
-        let read = &packet[..count];
-        tty_output.write_all(&read)?;
-        tty_output.flush()?;
+    let handle = thread::spawn(move || -> Result<()> {
+        while let Some(Ok(byte)) = child_input.next() {
+            tty_output.write(&[byte])?;
+            tty_output.flush()?;
+        }
+        Ok(())
     });
 
     thread::spawn(move || -> Result<()> {
