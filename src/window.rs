@@ -126,11 +126,16 @@ impl Grid {
     }
 
     pub fn update(&mut self, c: char) {
-        self.buffer[(self.cursor_x + self.cursor_y * self.width) as usize].c = c;
-        self.cursor_x += 1;
-        if self.cursor_x == self.width {
+        if c == '\n' || c == '\r' {
             self.cursor_x = 0;
             self.cursor_y += 1;
+        } else {
+            self.buffer[(self.cursor_x + self.cursor_y * self.width) as usize].c = c;
+            self.cursor_x += 1;
+            if self.cursor_x == self.width {
+                self.cursor_x = 0;
+                self.cursor_y += 1;
+            }
         }
     }
 }
