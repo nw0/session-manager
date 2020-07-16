@@ -114,14 +114,15 @@ impl Grid {
 
     pub fn draw(&self, term: &mut RawTerminal<File>) {
         for row in 0..self.height {
-            for col in 0..self.width {
-                write!(
-                    term,
-                    "{}{}",
-                    termion::cursor::Goto(1 + col, 1 + row),
-                    self.buffer[(col + row * self.width) as usize].c
-                );
-            }
+            let row_start = (row * self.width) as usize;
+            let row_end = ((row + 1) * self.width) as usize;
+            let row_chars = self.buffer[row_start..row_end].iter().map(|c| c.c);
+            write!(
+                term,
+                "{}{}",
+                termion::cursor::Goto(1, 1 + row),
+                row_chars.collect::<String>()
+            );
         }
     }
 
