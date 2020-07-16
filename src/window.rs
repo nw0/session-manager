@@ -4,9 +4,12 @@ use anyhow::Result;
 use nix::pty::{openpty, Winsize};
 use nix::unistd::setsid;
 use std::fs::File;
+use std::io::{Read, Write};
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
+use std::thread::{spawn, JoinHandle};
+use termion::raw::RawTerminal;
 
 nix::ioctl_write_ptr_bad!(win_resize, libc::TIOCSWINSZ, nix::pty::Winsize);
 nix::ioctl_none_bad!(set_controlling, libc::TIOCSCTTY);
@@ -14,21 +17,32 @@ nix::ioctl_none_bad!(set_controlling, libc::TIOCSCTTY);
 /// Window: a buffer and a pty.
 pub struct Window {
     pub child_pty: ChildPty,
+    pub update_thread: JoinHandle<Result<()>>,
 }
 
 impl Window {
-    pub fn new(command: &str, size: Winsize) -> Result<Window, ()> {
+    pub fn new(
+        command: &str,
+        size: Winsize,
+        mut output_stream: RawTerminal<File>,
+    ) -> Result<Window, ()> {
+        let child_pty = ChildPty::new(command, size)?;
+        let mut child_input = child_pty.file.try_clone().unwrap().bytes();
+        let update_thread = spawn(move || {
+            while let Some(Ok(byte)) = child_input.next() {
+                output_stream.write(&[byte])?;
+                output_stream.flush()?;
+            }
+            Ok(())
+        });
         Ok(Window {
-            child_pty: ChildPty::new(command, size)?,
+            child_pty,
+            update_thread,
         })
     }
 
     pub fn get_file(&self) -> &File {
         &self.child_pty.file
-    }
-
-    pub fn resize(&self, size: Winsize) -> Result<(), ()> {
-        self.child_pty.resize(size)
     }
 }
 

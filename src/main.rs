@@ -16,20 +16,12 @@ use window::Window;
 fn main() -> Result<()> {
     let signal = Signals::new(&[SIGWINCH])?;
 
-    let mut tty_output = get_tty()?.into_raw_mode()?;
+    let tty_output = get_tty()?.into_raw_mode()?;
     let mut tty_input = tty_output.try_clone()?;
 
-    let child = Window::new(&get_shell(), get_term_size()?).unwrap();
+    let child = Window::new(&get_shell(), get_term_size()?, tty_output).unwrap();
     let mut pty_output = child.get_file().try_clone()?;
-    let mut child_input = child.get_file().try_clone()?.bytes();
 
-    let handle = thread::spawn(move || -> Result<()> {
-        while let Some(Ok(byte)) = child_input.next() {
-            tty_output.write(&[byte])?;
-            tty_output.flush()?;
-        }
-        Ok(())
-    });
     let child_pty = child.child_pty;
 
     thread::spawn(move || -> Result<()> {
@@ -53,7 +45,7 @@ fn main() -> Result<()> {
         })
     });
 
-    handle.join().unwrap()
+    child.update_thread.join().unwrap()
 }
 
 pub fn get_term_size() -> Result<Winsize> {
