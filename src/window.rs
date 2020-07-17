@@ -27,12 +27,12 @@ impl Window {
         mut output_stream: RawTerminal<File>,
     ) -> Result<Window, ()> {
         let child_pty = ChildPty::new(command, size)?;
-        let mut grid = Grid::new(size.ws_col, size.ws_row);
+        let mut console = Console::new(size.ws_col, size.ws_row);
         let mut child_input = child_pty.file.try_clone().unwrap().bytes();
         let update_thread = spawn(move || {
             while let Some(Ok(byte)) = child_input.next() {
-                grid.update(byte as char);
-                grid.draw(&mut output_stream);
+                console.update(byte);
+                console.grid.draw(&mut output_stream);
             }
             Ok(())
         });
@@ -88,6 +88,28 @@ impl ChildPty {
     }
 }
 
+/// A console, which contains a display Grid and some state.
+struct Console {
+    grid: Grid,
+}
+
+impl Console {
+    /// Initialise a new console.
+    pub fn new(width: u16, height: u16) -> Console {
+        Console {
+            grid: Grid::new(width, height),
+        }
+    }
+
+    /// Read input from the pty.
+    ///
+    /// This method intercepts control codes and updates the `Console`'s internal state.
+    pub fn update(&mut self, input: u8) {
+        self.grid.update(input as char)
+    }
+}
+
+/// The display buffer of a console.
 struct Grid {
     cursor_x: u16,
     cursor_y: u16,
@@ -97,6 +119,7 @@ struct Grid {
 }
 
 impl Grid {
+    /// Initialise an empty display buffer.
     pub fn new(width: u16, height: u16) -> Grid {
         let sz = width * height;
         let mut buffer = Vec::with_capacity(sz as usize);
@@ -112,6 +135,7 @@ impl Grid {
         }
     }
 
+    /// Draw this buffer to `term`.
     pub fn draw(&self, term: &mut RawTerminal<File>) {
         for row in 0..self.height {
             let row_start = (row * self.width) as usize;
