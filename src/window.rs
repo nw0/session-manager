@@ -1,6 +1,7 @@
 //! Structures and functions to manage windows.
 
 use anyhow::Result;
+use log::{debug, info};
 use nix::pty::{openpty, Winsize};
 use nix::unistd::setsid;
 use std::fs::File;
