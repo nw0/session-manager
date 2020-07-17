@@ -20,6 +20,7 @@ use std::thread;
 use termion::get_tty;
 use termion::raw::IntoRawMode;
 
+mod console;
 mod window;
 use window::Window;
 
