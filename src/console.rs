@@ -102,23 +102,40 @@ impl Perform for Grid {
     fn csi_dispatch(&mut self, params: &[i64], intermediates: &[u8], ignore: bool, action: char) {
         match action {
             'C' => {
-                // CUF -- move cursor right #
+                // CUF -- move cursor forward #
                 let n = std::cmp::max(1, params[0]) as u16;
                 self.cursor_x = std::cmp::min(self.width - 1, self.cursor_x + n);
             }
+            'D' => {
+                // CUB -- move cursor back #
+                let n = std::cmp::max(1, params[0]) as u16;
+                self.cursor_x = std::cmp::max(0, self.cursor_x - n);
+            }
             'H' => {
                 // CUP -- move cursor
-                self.cursor_x = std::cmp::max(1, params[0]) as u16;
+                self.cursor_x = std::cmp::max(0, params[0] - 1) as u16;
                 if params.len() > 1 {
-                    self.cursor_y = std::cmp::max(1, params[1]) as u16;
+                    self.cursor_y = std::cmp::max(0, params[1] - 1) as u16;
                 } else {
-                    self.cursor_y = 1;
+                    self.cursor_y = 0;
                 }
             }
             'J' => {
                 // ED -- erase display
                 match params[0] {
-                    2 => {
+                    0 => {
+                        let cur_pos = (self.cursor_x + (self.width * self.cursor_y)) as usize;
+                        for i in cur_pos..(self.buffer.len()) {
+                            self.buffer[i].c = '.';
+                        }
+                    }
+                    1 => {
+                        let cur_pos = self.cursor_x + (self.width * self.cursor_y);
+                        for i in 0..cur_pos {
+                            self.buffer[i as usize].c = '.';
+                        }
+                    }
+                    2 | 3 => {
                         for i in &mut self.buffer {
                             i.c = '.';
                         }
