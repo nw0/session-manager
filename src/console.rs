@@ -147,11 +147,11 @@ impl Perform for Grid {
             }
             'H' => {
                 // CUP -- move cursor
-                self.cursor_x = std::cmp::max(0, params[0] - 1) as u16;
+                self.cursor_y = std::cmp::max(0, params[0] - 1) as u16;
                 if params.len() > 1 {
-                    self.cursor_y = std::cmp::max(0, params[1] - 1) as u16;
+                    self.cursor_x = std::cmp::max(0, params[1] - 1) as u16;
                 } else {
-                    self.cursor_y = 0;
+                    self.cursor_x = 0;
                 }
             }
             'J' => {
