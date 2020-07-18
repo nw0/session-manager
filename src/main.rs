@@ -6,12 +6,9 @@ use anyhow::Result;
 use log::LevelFilter;
 use log4rs::{
     append::{
-        console::{ConsoleAppender, Target},
         file::FileAppender,
     },
     config::{Appender, Config, Root},
-    encode::pattern::PatternEncoder,
-    filter::threshold::ThresholdFilter,
 };
 use nix::pty::Winsize;
 use signal_hook::{iterator::Signals, SIGWINCH};
@@ -25,19 +22,12 @@ mod window;
 use window::Window;
 
 fn main() -> Result<()> {
-    let stderr = ConsoleAppender::builder().target(Target::Stderr).build();
     let logfile = FileAppender::builder()
         // Pattern: https://docs.rs/log4rs/*/log4rs/encode/pattern/index.html
-        .encoder(Box::new(PatternEncoder::new("{l} - {m}\n")))
         .build("log")
         .unwrap();
     let config = Config::builder()
         .appender(Appender::builder().build("logfile", Box::new(logfile)))
-        .appender(
-            Appender::builder()
-                .filter(Box::new(ThresholdFilter::new(log::LevelFilter::Debug)))
-                .build("stderr", Box::new(stderr)),
-        )
         .build(
             Root::builder()
                 .appender("logfile")

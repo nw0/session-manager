@@ -10,7 +10,7 @@ edition = "2018"
 anyhow = "1"
 libc = "0.2"
 log = "*"
-log4rs = "*"
+log4rs = { version = "*", default-features = false, features = ["file_appender"] }
 nix = "0.17"
 signal-hook = "0.1"
 termion = "1.5"
