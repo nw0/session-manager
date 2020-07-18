@@ -106,6 +106,60 @@ impl Cell {
     }
 }
 
+/// Control character constants.
+mod cc {
+    pub const BEL: u8 = 0x07;
+    pub const BS: u8 = 0x08;
+    pub const HT: u8 = 0x09;
+    pub const LF: u8 = 0x0a;
+    pub const VT: u8 = 0x0b;
+    pub const FF: u8 = 0x0c;
+    pub const CR: u8 = 0x0d;
+    pub const SO: u8 = 0x0e;
+    pub const SI: u8 = 0x0f;
+
+    pub const CAN: u8 = 0x18;
+    pub const SUB: u8 = 0x1a;
+    pub const DEL: u8 = 0x7f;
+}
+
+/// CSI sequences.
+///
+/// `char` used for compatibility with `csi_dispatch`.
+// from ECMA-48, via `man console_codes` -- some missing?
+mod csi {
+    pub const ICH: char = '@';
+    pub const CUU: char = 'A';
+    pub const CUD: char = 'B';
+    pub const CUF: char = 'C';
+    pub const CUB: char = 'D';
+    pub const CNL: char = 'E';
+    pub const CPL: char = 'F';
+    pub const CHA: char = 'G';
+    pub const CUP: char = 'H';
+    pub const ED: char = 'J';
+    pub const EL: char = 'K';
+    pub const IL: char = 'L';
+    pub const DL: char = 'M';
+    pub const DCH: char = 'P';
+    pub const ECH: char = 'X';
+    pub const HPR: char = 'a';
+    pub const DA: char = 'c';
+    pub const VPA: char = 'd';
+    pub const VPR: char = 'e';
+    pub const HVP: char = 'f';
+    pub const TBC: char = 'g';
+    pub const SM: char = 'h';
+    pub const RM: char = 'l';
+    pub const SGR: char = 'm';
+    pub const DSR: char = 'n';
+    pub const DECLL: char = 'q';
+    pub const DECSTBM: char = 'r';
+    pub const SAVEC: char = 's'; // not official name
+    pub const RESTC: char = 'u'; // not official name
+    pub const HPA: char = '`';
+}
+
 impl Perform for Grid {
     fn print(&mut self, c: char) {
         self.update(c);
@@ -113,47 +167,31 @@ impl Perform for Grid {
 
     fn execute(&mut self, byte: u8) {
         match byte {
-            b'' => {
-                // BEL
-                debug!("BEL");
-            }
-            b'' => {
-                // BS
+            cc::BEL => info!("BEL"),
+            cc::BS => {
                 if self.cursor_x > 0 {
                     self.cursor_x -= 1;
                 }
             }
-            0x09 => {
-                // HT -- tab stop
+            cc::HT => {
                 self.cursor_x = std::cmp::min(self.width - 1, (self.cursor_x + 8) & !7);
             }
-            0x0a | b'' | b'' => {
-                // LF | VT | FF
+            cc::LF | cc::VT | cc::FF => {
                 self.cursor_y += 1;
                 if self.cursor_y == self.height {
                     self.scroll(1);
                     self.cursor_y -= 1;
                 }
             }
-            b'\r' => {
+            cc::CR => {
                 // CR
                 self.cursor_x = 0;
             }
-            b'' => {
-                // SO -- activate G1
-            }
-            b'' => {
-                // SI -- activate G0
-            }
-            b'' => {
-                // CAN -- abort
-            }
-            b'' => {
-                // SUB -- abort
-            }
-            0x7f => {
-                // DEL
-            }
+            cc::SO => info!("unimpl: exec SO"),
+            cc::SI => info!("unimpl: exec SI"),
+            cc::CAN => debug!("unimpl: exec CAN"),
+            cc::SUB => debug!("unimpl: exec SUB"),
+            cc::DEL => debug!("DEL"),
             _ => {
                 debug!("[execute] {:02x}", byte);
             }
@@ -197,28 +235,23 @@ impl Perform for Grid {
 
     fn csi_dispatch(&mut self, params: &[i64], intermediates: &[u8], ignore: bool, action: char) {
         match action {
-            'A' => {
-                // CUU -- move cursor up #
+            csi::CUU => {
                 let n = std::cmp::max(1, params[0]) as u16;
                 self.cursor_y = std::cmp::max(0, self.cursor_y - n);
             }
-            'B' => {
-                // CUD -- move cursor down #
+            csi::CUD => {
                 let n = std::cmp::max(1, params[0]) as u16;
                 self.cursor_y = std::cmp::min(self.height - 1, self.cursor_y - n);
             }
-            'C' => {
-                // CUF -- move cursor forward #
+            csi::CUF => {
                 let n = std::cmp::max(1, params[0]) as u16;
                 self.cursor_x = std::cmp::min(self.width - 1, self.cursor_x + n);
             }
-            'D' => {
-                // CUB -- move cursor back #
+            csi::CUB => {
                 let n = std::cmp::max(1, params[0]) as u16;
                 self.cursor_x = std::cmp::max(0, self.cursor_x - n);
             }
-            'H' => {
-                // CUP -- move cursor
+            csi::CUP => {
                 self.cursor_y = std::cmp::max(0, params[0] - 1) as u16;
                 if params.len() > 1 {
                     self.cursor_x = std::cmp::max(0, params[1] - 1) as u16;
@@ -226,60 +259,54 @@ impl Perform for Grid {
                     self.cursor_x = 0;
                 }
             }
-            'J' => {
-                // ED -- erase display
-                match params[0] {
-                    0 => {
-                        let cur_pos = (self.cursor_x + (self.width * self.cursor_y)) as usize;
-                        for i in cur_pos..(self.buffer.len()) {
-                            self.buffer[i].c = '.';
-                        }
+            csi::ED => match params[0] {
+                0 => {
+                    let cur_pos = (self.cursor_x + (self.width * self.cursor_y)) as usize;
+                    for i in cur_pos..(self.buffer.len()) {
+                        self.buffer[i].c = '.';
                     }
-                    1 => {
-                        let cur_pos = self.cursor_x + (self.width * self.cursor_y);
-                        for i in 0..cur_pos {
-                            self.buffer[i as usize].c = '.';
-                        }
+                }
+                1 => {
+                    let cur_pos = self.cursor_x + (self.width * self.cursor_y);
+                    for i in 0..cur_pos {
+                        self.buffer[i as usize].c = '.';
                     }
-                    2 | 3 => {
-                        for i in &mut self.buffer {
-                            i.c = '.';
-                        }
+                }
+                2 | 3 => {
+                    for i in &mut self.buffer {
+                        i.c = '.';
                     }
-                    _ => {
-                        debug!(
+                }
+                _ => {
+                    debug!(
             "[csi_dispatch] (J) params={:?}, intermediates={:?}, ignore={:?}, char={:?}",
             params, intermediates, ignore, action
         );
+                }
+            },
+            csi::EL => match params[0] {
+                0 => {
+                    for x in self.cursor_x..self.width {
+                        self.set_cell('_', x, self.cursor_y);
                     }
                 }
-            }
-            'K' => {
-                // EL (K -- to end; 1 K -- from start; 2 K -- whole line)
-                match params[0] {
-                    0 => {
-                        for x in self.cursor_x..self.width {
-                            self.set_cell('_', x, self.cursor_y);
-                        }
+                1 => {
+                    for x in 0..self.cursor_x {
+                        self.set_cell('_', x, self.cursor_y);
                     }
-                    1 => {
-                        for x in 0..self.cursor_x {
-                            self.set_cell('_', x, self.cursor_y);
-                        }
+                }
+                2 => {
+                    for x in 0..self.width {
+                        self.set_cell('_', x, self.cursor_y);
                     }
-                    2 => {
-                        for x in 0..self.width {
-                            self.set_cell('_', x, self.cursor_y);
-                        }
-                    }
-                    _ => {
-                        debug!(
+                }
+                _ => {
+                    debug!(
             "[csi_dispatch] (K) params={:?}, intermediates={:?}, ignore={:?}, char={:?}",
             params, intermediates, ignore, action
         );
-                    }
                 }
-            }
+            },
             _ => {
                 debug!(
                     "[csi_dispatch] params={:?}, intermediates={:?}, ignore={:?}, char={:?}",
