@@ -42,12 +42,11 @@ impl Perform for Grid {
                 // BS
                 if self.cursor_x > 0 {
                     self.cursor_x -= 1;
-                    self.set_current('_');
                 }
             }
             0x09 => {
                 // HT -- tab stop
-                info!("unhandled tab stop");
+                self.cursor_x = std::cmp::min(self.width - 1, (self.cursor_x + 8) & !7);
             }
             0x0a | b'' | b'' => {
                 // LF | VT | FF
@@ -100,11 +99,41 @@ impl Perform for Grid {
         );
     }
 
-    fn csi_dispatch(&mut self, params: &[i64], intermediates: &[u8], ignore: bool, c: char) {
-        debug!(
+    fn csi_dispatch(&mut self, params: &[i64], intermediates: &[u8], ignore: bool, action: char) {
+        match action {
+            'K' => {
+                // EL (K -- to end; 1 K -- from start; 2 K -- whole line)
+                match params[0] {
+                    0 => {
+                        for x in self.cursor_x..self.width {
+                            self.set_cell('_', x, self.cursor_y);
+                        }
+                    }
+                    1 => {
+                        for x in 0..self.cursor_x {
+                            self.set_cell('_', x, self.cursor_y);
+                        }
+                    }
+                    2 => {
+                        for x in 0..self.width {
+                            self.set_cell('_', x, self.cursor_y);
+                        }
+                    }
+                    _ => {
+                        debug!(
             "[csi_dispatch] params={:?}, intermediates={:?}, ignore={:?}, char={:?}",
-            params, intermediates, ignore, c
+            params, intermediates, ignore, action
         );
+                    }
+                }
+            }
+            _ => {
+                debug!(
+                    "[csi_dispatch] params={:?}, intermediates={:?}, ignore={:?}, char={:?}",
+                    params, intermediates, ignore, action
+                );
+            }
+        }
     }
 
     fn esc_dispatch(&mut self, intermediates: &[u8], ignore: bool, byte: u8) {
