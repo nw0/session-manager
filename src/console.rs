@@ -93,10 +93,23 @@ impl Perform for Grid {
     }
 
     fn osc_dispatch(&mut self, params: &[&[u8]], bell_terminated: bool) {
-        debug!(
-            "[osc_dispatch] params={:?} bell_terminated={}",
-            params, bell_terminated
-        );
+        if !params.is_empty() {
+            match params[0] {
+                b"0" | b"2" => {
+                    if let Ok(title) = std::str::from_utf8(params[1]) {
+                        info!("[osc] set title: \"{}\"", title)
+                    }
+                }
+                _ => {
+                    debug!(
+                        "[osc_dispatch] params={:?} bell_terminated={}",
+                        params, bell_terminated
+                    );
+                }
+            }
+        } else {
+            debug!("empty OSC sequence");
+        }
     }
 
     fn csi_dispatch(&mut self, params: &[i64], intermediates: &[u8], ignore: bool, action: char) {
