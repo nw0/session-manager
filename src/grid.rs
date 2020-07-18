@@ -14,6 +14,13 @@ enum Displace {
     ToTabStop,
 }
 
+#[derive(Eq, PartialEq)]
+enum Range {
+    Full,
+    FromCursor,
+    ToCursor,
+}
+
 /// The display buffer of a console.
 pub struct Grid {
     cursor_x: u16,
@@ -75,6 +82,11 @@ impl Grid {
         }
     }
 
+    fn buffer_idx(&self, x: u16, y: u16) -> usize {
+        // TODO: x >= width, y >= height?
+        (x + y * self.width).into()
+    }
+
     fn move_horizontal(&mut self, displacement: Displace) {
         self.cursor_x = match displacement {
             Displace::Absolute(offset) => max(0, min(self.width as i64 - 1, offset)),
@@ -104,6 +116,38 @@ impl Grid {
         .try_into()
         .unwrap();
         // no scrolling
+    }
+
+    fn erase_display(&mut self, range: Range) {
+        let start = if range == Range::FromCursor {
+            self.buffer_idx(self.cursor_x, self.cursor_y)
+        } else {
+            0
+        };
+        let end = if range == Range::ToCursor {
+            self.buffer_idx(self.cursor_x, self.cursor_y)
+        } else {
+            self.buffer.len()
+        };
+        for i in start..end {
+            self.buffer[i] = Cell::default();
+        }
+    }
+
+    fn erase_line(&mut self, range: Range) {
+        let start = if range == Range::FromCursor {
+            self.buffer_idx(self.cursor_x, self.cursor_y)
+        } else {
+            self.buffer_idx(0, self.cursor_y)
+        };
+        let end = if range == Range::ToCursor {
+            self.buffer_idx(self.cursor_x, self.cursor_y)
+        } else {
+            self.buffer_idx(self.width - 1, self.cursor_y)
+        };
+        for i in start..end {
+            self.buffer[i] = Cell::default();
+        }
     }
 
     pub fn set_current(&mut self, c: char) {
@@ -291,23 +335,9 @@ impl Perform for Grid {
                 }
             }
             csi::ED => match params[0] {
-                0 => {
-                    let cur_pos = (self.cursor_x + (self.width * self.cursor_y)) as usize;
-                    for i in cur_pos..(self.buffer.len()) {
-                        self.buffer[i].c = '.';
-                    }
-                }
-                1 => {
-                    let cur_pos = self.cursor_x + (self.width * self.cursor_y);
-                    for i in 0..cur_pos {
-                        self.buffer[i as usize].c = '.';
-                    }
-                }
-                2 | 3 => {
-                    for i in &mut self.buffer {
-                        i.c = '.';
-                    }
-                }
+                0 => self.erase_display(Range::FromCursor),
+                1 => self.erase_display(Range::ToCursor),
+                2 | 3 => self.erase_display(Range::Full),
                 _ => {
                     debug!(
             "[csi_dispatch] (J) params={:?}, intermediates={:?}, ignore={:?}, char={:?}",
@@ -316,21 +346,9 @@ impl Perform for Grid {
                 }
             },
             csi::EL => match params[0] {
-                0 => {
-                    for x in self.cursor_x..self.width {
-                        self.set_cell('_', x, self.cursor_y);
-                    }
-                }
-                1 => {
-                    for x in 0..self.cursor_x {
-                        self.set_cell('_', x, self.cursor_y);
-                    }
-                }
-                2 => {
-                    for x in 0..self.width {
-                        self.set_cell('_', x, self.cursor_y);
-                    }
-                }
+                0 => self.erase_line(Range::FromCursor),
+                1 => self.erase_line(Range::ToCursor),
+                2 => self.erase_line(Range::Full),
                 _ => {
                     debug!(
             "[csi_dispatch] (K) params={:?}, intermediates={:?}, ignore={:?}, char={:?}",
