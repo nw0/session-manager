@@ -8,7 +8,8 @@ use std::io::Read;
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
-use std::thread::{spawn, JoinHandle};
+use std::sync::mpsc::{channel, Receiver};
+use std::thread::spawn;
 use termion::raw::RawTerminal;
 
 use crate::console::Console;
@@ -19,7 +20,7 @@ nix::ioctl_none_bad!(set_controlling, libc::TIOCSCTTY);
 /// Window: a buffer and a pty.
 pub struct Window {
     pub child_pty: ChildPty,
-    pub update_thread: JoinHandle<Result<()>>,
+    pub status: Receiver<bool>,
 }
 
 impl Window {
@@ -28,20 +29,18 @@ impl Window {
         size: Winsize,
         mut output_stream: RawTerminal<File>,
     ) -> Result<Window, ()> {
+        let (sender, status) = channel();
         let child_pty = ChildPty::new(command, size)?;
         let mut console = Console::new(size.ws_col, size.ws_row);
         let mut child_input = child_pty.file.try_clone().unwrap().bytes();
-        let update_thread = spawn(move || {
+        spawn(move || {
             while let Some(Ok(byte)) = child_input.next() {
                 console.update(byte);
                 console.grid.draw(&mut output_stream);
             }
-            Ok(())
+            sender.send(true).unwrap();
         });
-        Ok(Window {
-            child_pty,
-            update_thread,
-        })
+        Ok(Window { child_pty, status })
     }
 
     pub fn get_file(&self) -> &File {

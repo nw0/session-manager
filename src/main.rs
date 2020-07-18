@@ -78,7 +78,8 @@ fn main() -> Result<()> {
         })
     });
 
-    child.update_thread.join().unwrap()
+    child.status.recv().unwrap();
+    Ok(())
 }
 
 pub fn get_term_size() -> Result<Winsize> {
