@@ -50,26 +50,19 @@ fn main() -> Result<()> {
     let signal = Signals::new(&[SIGWINCH])?;
 
     let tty_output = get_tty()?.into_raw_mode()?;
-    let mut tty_input = tty_output.try_clone()?;
+    let mut tty_input = tty_output.try_clone()?.bytes();
 
     let child = Window::new(&get_shell(), get_term_size()?, tty_output).unwrap();
     let mut pty_output = child.get_file().try_clone()?;
 
-    let child_pty = child.child_pty;
+    let child_pty = child.console.child_pty;
 
     thread::spawn(move || -> Result<()> {
-        loop {
-            let mut packet = [0; 4096];
-            let count = tty_input.read(&mut packet)?;
-            let read = &packet[..count];
-            if read.len() == 1 && read[0] == 0x18 {
-                // capture C-x for control
-                // TODO
-            } else {
-                pty_output.write_all(&read)?;
-                pty_output.flush()?;
-            }
+        while let Some(Ok(byte)) = tty_input.next() {
+            pty_output.write(&[byte])?;
+            pty_output.flush()?;
         }
+        Ok(())
     });
 
     thread::spawn(move || -> Result<()> {
