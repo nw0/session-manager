@@ -72,6 +72,10 @@ impl Perform for Grid {
             0x0a | b'' | b'' => {
                 // LF | VT | FF
                 self.cursor_y += 1;
+                if self.cursor_y == self.height {
+                    self.scroll(1);
+                    self.cursor_y -= 1;
+                }
             }
             b'\r' => {
                 // CR
@@ -135,6 +139,16 @@ impl Perform for Grid {
 
     fn csi_dispatch(&mut self, params: &[i64], intermediates: &[u8], ignore: bool, action: char) {
         match action {
+            'A' => {
+                // CUU -- move cursor up #
+                let n = std::cmp::max(1, params[0]) as u16;
+                self.cursor_y = std::cmp::max(0, self.cursor_y - n);
+            }
+            'B' => {
+                // CUD -- move cursor down #
+                let n = std::cmp::max(1, params[0]) as u16;
+                self.cursor_y = std::cmp::min(self.height - 1, self.cursor_y - n);
+            }
             'C' => {
                 // CUF -- move cursor forward #
                 let n = std::cmp::max(1, params[0]) as u16;
@@ -279,6 +293,10 @@ impl Grid {
         if self.cursor_x == self.width {
             self.cursor_x = 0;
             self.cursor_y += 1;
+            if self.cursor_y == self.height {
+                self.scroll(1);
+                self.cursor_y -= 1;
+            }
         }
     }
 
@@ -289,6 +307,26 @@ impl Grid {
     pub fn set_cell(&mut self, c: char, x: u16, y: u16) {
         // TODO: check x < width, y < height
         self.buffer[(x + y * self.width) as usize].c = c;
+    }
+
+    pub fn get_cell(&self, x: u16, y: u16) -> char {
+        self.buffer[(x + y * self.width) as usize].c
+    }
+
+    /// Scroll up (sorry, no scrolling down yet).
+    fn scroll(&mut self, lines: u16) {
+        if lines < 1 {
+            return;
+        }
+        for y in 0..self.height {
+            for x in 0..self.width {
+                if y + lines < self.height {
+                    self.set_cell(self.get_cell(x, y + lines), x, y);
+                } else {
+                     self.set_cell('.', x, y);
+                }
+            }
+        }
     }
 }
 
