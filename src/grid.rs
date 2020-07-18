@@ -1,9 +1,18 @@
 //! Console buffer implementation.
-use log::{debug, info};
+use log::{debug, info, warn};
+use std::cmp::{max, min};
+use std::convert::TryInto;
 use std::fs::File;
 use std::io::Write;
 use termion::raw::RawTerminal;
 use vte::Perform;
+
+enum Displace {
+    Absolute(i64),
+    Relative(i64),
+    ToStart,
+    ToTabStop,
+}
 
 /// The display buffer of a console.
 pub struct Grid {
@@ -64,6 +73,37 @@ impl Grid {
                 self.cursor_y -= 1;
             }
         }
+    }
+
+    fn move_horizontal(&mut self, displacement: Displace) {
+        self.cursor_x = match displacement {
+            Displace::Absolute(offset) => max(0, min(self.width as i64 - 1, offset)),
+            Displace::Relative(offset) => {
+                max(0, min(self.width as i64 - 1, self.cursor_x as i64 + offset))
+            }
+            Displace::ToStart => 0,
+            Displace::ToTabStop => ((self.cursor_x + 8) & !7).into(),
+        }
+        .try_into()
+        .unwrap();
+    }
+
+    fn move_vertical(&mut self, displacement: Displace) {
+        self.cursor_y = match displacement {
+            Displace::Absolute(offset) => max(0, min(self.height as i64 - 1, offset)),
+            Displace::Relative(offset) => max(
+                0,
+                min(self.height as i64 - 1, self.cursor_y as i64 + offset),
+            ),
+            Displace::ToStart => 0,
+            Displace::ToTabStop => {
+                warn!("unimpl: vertical tab");
+                self.cursor_y.into()
+            }
+        }
+        .try_into()
+        .unwrap();
+        // no scrolling
     }
 
     pub fn set_current(&mut self, c: char) {
@@ -168,14 +208,8 @@ impl Perform for Grid {
     fn execute(&mut self, byte: u8) {
         match byte {
             cc::BEL => info!("BEL"),
-            cc::BS => {
-                if self.cursor_x > 0 {
-                    self.cursor_x -= 1;
-                }
-            }
-            cc::HT => {
-                self.cursor_x = std::cmp::min(self.width - 1, (self.cursor_x + 8) & !7);
-            }
+            cc::BS => self.move_horizontal(Displace::Relative(-1)),
+            cc::HT => self.move_horizontal(Displace::ToTabStop),
             cc::LF | cc::VT | cc::FF => {
                 self.cursor_y += 1;
                 if self.cursor_y == self.height {
@@ -183,10 +217,7 @@ impl Perform for Grid {
                     self.cursor_y -= 1;
                 }
             }
-            cc::CR => {
-                // CR
-                self.cursor_x = 0;
-            }
+            cc::CR => self.move_horizontal(Displace::ToStart),
             cc::SO => info!("unimpl: exec SO"),
             cc::SI => info!("unimpl: exec SI"),
             cc::CAN => debug!("unimpl: exec CAN"),
@@ -244,19 +275,19 @@ impl Perform for Grid {
                 self.cursor_y = std::cmp::min(self.height - 1, self.cursor_y - n);
             }
             csi::CUF => {
-                let n = std::cmp::max(1, params[0]) as u16;
-                self.cursor_x = std::cmp::min(self.width - 1, self.cursor_x + n);
+                let n = std::cmp::max(1, params[0]);
+                self.move_horizontal(Displace::Relative(n));
             }
             csi::CUB => {
-                let n = std::cmp::max(1, params[0]) as u16;
-                self.cursor_x = std::cmp::max(0, self.cursor_x - n);
+                let n = std::cmp::max(1, params[0]);
+                self.move_horizontal(Displace::Relative(-n))
             }
             csi::CUP => {
-                self.cursor_y = std::cmp::max(0, params[0] - 1) as u16;
+                self.move_vertical(Displace::Absolute(params[0] - 1));
                 if params.len() > 1 {
-                    self.cursor_x = std::cmp::max(0, params[1] - 1) as u16;
+                    self.move_horizontal(Displace::Absolute(params[1] - 1));
                 } else {
-                    self.cursor_x = 0;
+                    self.move_horizontal(Displace::Absolute(0));
                 }
             }
             csi::ED => match params[0] {
