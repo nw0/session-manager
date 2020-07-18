@@ -101,6 +101,36 @@ impl Perform for Grid {
 
     fn csi_dispatch(&mut self, params: &[i64], intermediates: &[u8], ignore: bool, action: char) {
         match action {
+            'C' => {
+                // CUF -- move cursor right #
+                let n = std::cmp::max(1, params[0]) as u16;
+                self.cursor_x = std::cmp::min(self.width - 1, self.cursor_x + n);
+            }
+            'H' => {
+                // CUP -- move cursor
+                self.cursor_x = std::cmp::max(1, params[0]) as u16;
+                if params.len() > 1 {
+                    self.cursor_y = std::cmp::max(1, params[1]) as u16;
+                } else {
+                    self.cursor_y = 1;
+                }
+            }
+            'J' => {
+                // ED -- erase display
+                match params[0] {
+                    2 => {
+                        for i in &mut self.buffer {
+                            i.c = '.';
+                        }
+                    }
+                    _ => {
+                        debug!(
+            "[csi_dispatch] (J) params={:?}, intermediates={:?}, ignore={:?}, char={:?}",
+            params, intermediates, ignore, action
+        );
+                    }
+                }
+            }
             'K' => {
                 // EL (K -- to end; 1 K -- from start; 2 K -- whole line)
                 match params[0] {
@@ -121,7 +151,7 @@ impl Perform for Grid {
                     }
                     _ => {
                         debug!(
-            "[csi_dispatch] params={:?}, intermediates={:?}, ignore={:?}, char={:?}",
+            "[csi_dispatch] (K) params={:?}, intermediates={:?}, ignore={:?}, char={:?}",
             params, intermediates, ignore, action
         );
                     }
