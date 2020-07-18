@@ -2,17 +2,12 @@ use log::{debug, info};
 use std::fs::File;
 use std::io::Write;
 use termion::raw::RawTerminal;
-
-enum ConsoleState {
-    Normal,
-    Esc,
-    Csi,
-}
+use vte::{Parser, Perform};
 
 /// A console, which contains a display Grid and some state.
 pub struct Console {
     pub grid: Grid,
-    state: ConsoleState,
+    parser: Parser,
 }
 
 impl Console {
@@ -20,7 +15,7 @@ impl Console {
     pub fn new(width: u16, height: u16) -> Console {
         Console {
             grid: Grid::new(width, height),
-            state: ConsoleState::Normal,
+            parser: Parser::new(),
         }
     }
 
@@ -28,87 +23,95 @@ impl Console {
     ///
     /// This method intercepts control codes and updates the `Console`'s internal state.
     pub fn update(&mut self, input: u8) {
-        match self.state {
-            ConsoleState::Normal => {
-                match input {
-                    b'' => {
-                        // BEL
-                        debug!("BEL");
-                    }
-                    b'' => {
-                        // BS
-                        if self.grid.cursor_x > 0 {
-                            self.grid.cursor_x -= 1;
-                            self.grid.set_current('_');
-                        }
-                    }
-                    0x09 => {
-                        // HT -- tab stop
-                        info!("unhandled tab stop");
-                    }
-                    0x0a | b'' | b'' => {
-                        // LF | VT | FF
-                        self.grid.cursor_y += 1;
-                    }
-                    b'\r' => {
-                        // CR
-                        self.grid.cursor_x = 0;
-                    }
-                    b'' => {
-                        // SO -- activate G1
-                    }
-                    b'' => {
-                        // SI -- activate G0
-                    }
-                    b'' => {
-                        // CAN -- abort
-                    }
-                    b'' => {
-                        // SUB -- abort
-                    }
-                    b'' => {
-                        // ESC
-                        self.state = ConsoleState::Esc;
-                    }
-                    0x7f => {
-                        // DEL
-                    }
-                    0x9b => {
-                        // CSI
-                        self.state = ConsoleState::Csi;
-                    }
-                    ch if ch.is_ascii() => {
-                        self.grid.update(ch as char);
-                    }
-                    _ => {
-                        debug!("unrecognised: {:2x}", input);
-                    }
+        self.parser.advance(&mut self.grid, input)
+    }
+}
+
+impl Perform for Grid {
+    fn print(&mut self, c: char) {
+        self.update(c);
+    }
+
+    fn execute(&mut self, byte: u8) {
+        match byte {
+            b'' => {
+                // BEL
+                debug!("BEL");
+            }
+            b'' => {
+                // BS
+                if self.cursor_x > 0 {
+                    self.cursor_x -= 1;
+                    self.set_current('_');
                 }
             }
-            ConsoleState::Esc => match input {
-                b'[' => {
-                    self.state = ConsoleState::Csi;
-                }
-                _ => {
-                    debug!("ESC unrecognised: {:2x}", input);
-                }
-            },
-            ConsoleState::Csi => {
-                match input {
-                    b'K' => {
-                        // EL
-                        // TODO: handle 1, 2
-                        for x in self.grid.cursor_x..self.grid.width {
-                            self.grid.set_cell('-', x, self.grid.cursor_y);
-                        }
-                        self.state = ConsoleState::Normal;
-                    }
-                    _ => {
-                        debug!("CSI unrecognised: {:2x}", input);
-                    }
-                }
+            0x09 => {
+                // HT -- tab stop
+                info!("unhandled tab stop");
+            }
+            0x0a | b'' | b'' => {
+                // LF | VT | FF
+                self.cursor_y += 1;
+            }
+            b'\r' => {
+                // CR
+                self.cursor_x = 0;
+            }
+            b'' => {
+                // SO -- activate G1
+            }
+            b'' => {
+                // SI -- activate G0
+            }
+            b'' => {
+                // CAN -- abort
+            }
+            b'' => {
+                // SUB -- abort
+            }
+            0x7f => {
+                // DEL
+            }
+            _ => {
+                debug!("[execute] {:02x}", byte);
             }
         }
+    }
+
+    fn hook(&mut self, params: &[i64], intermediates: &[u8], ignore: bool, c: char) {
+        debug!(
+            "[hook] params={:?}, intermediates={:?}, ignore={:?}, char={:?}",
+            params, intermediates, ignore, c
+        );
+    }
+
+    fn put(&mut self, byte: u8) {
+        debug!("[put] {:02x}", byte);
+    }
+
+    fn unhook(&mut self) {
+        debug!("[unhook]");
+    }
+
+    fn osc_dispatch(&mut self, params: &[&[u8]], bell_terminated: bool) {
+        debug!(
+            "[osc_dispatch] params={:?} bell_terminated={}",
+            params, bell_terminated
+        );
+    }
+
+    fn csi_dispatch(&mut self, params: &[i64], intermediates: &[u8], ignore: bool, c: char) {
+        debug!(
+            "[csi_dispatch] params={:?}, intermediates={:?}, ignore={:?}, char={:?}",
+            params, intermediates, ignore, c
+        );
+    }
+
+    fn esc_dispatch(&mut self, intermediates: &[u8], ignore: bool, byte: u8) {
+        debug!(
+            "[esc_dispatch] intermediates={:?}, ignore={:?}, byte={:02x}",
+            intermediates, ignore, byte
+        );
     }
 }
 
