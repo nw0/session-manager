@@ -5,9 +5,7 @@
 use anyhow::Result;
 use log::LevelFilter;
 use log4rs::{
-    append::{
-        file::FileAppender,
-    },
+    append::file::FileAppender,
     config::{Appender, Config, Root},
 };
 use nix::pty::Winsize;
@@ -18,6 +16,7 @@ use termion::get_tty;
 use termion::raw::IntoRawMode;
 
 mod console;
+mod grid;
 mod window;
 use window::Window;
 
