@@ -1,3 +1,4 @@
+//! Structures to manage a pseudoterminal.
 use log::{debug, info};
 use nix::pty::{openpty, Winsize};
 use nix::unistd::setsid;
@@ -14,20 +15,23 @@ use vte::{Parser, Perform};
 nix::ioctl_write_ptr_bad!(win_resize, libc::TIOCSWINSZ, nix::pty::Winsize);
 nix::ioctl_none_bad!(set_controlling, libc::TIOCSCTTY);
 
-/// A console, which contains a display Grid and some state.
+/// A pty and state.
 pub struct Console {
     pub child_pty: ChildPty,
 }
 
 impl Console {
     /// Initialise a new console.
+    ///
+    /// The returned `Receiver` signals when the process running in the child
+    /// pty has terminated.
     pub fn new(
         command: &str,
         size: Winsize,
         mut output_stream: RawTerminal<File>,
     ) -> Result<(Console, Receiver<bool>), ()> {
-        let child_pty = ChildPty::new(command, size)?;
         let (sender, status) = channel();
+        let child_pty = ChildPty::new(command, size)?;
         let mut pty_output = child_pty.file.try_clone().unwrap().bytes();
         let mut parser = Parser::new();
         let mut grid = Grid::new(size.ws_col, size.ws_row);

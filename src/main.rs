@@ -41,7 +41,6 @@ fn main() -> Result<()> {
         .build(
             Root::builder()
                 .appender("logfile")
-                .appender("stderr")
                 .build(LevelFilter::Trace),
         )
         .unwrap();
@@ -58,6 +57,7 @@ fn main() -> Result<()> {
     let child_pty = child.console.child_pty;
 
     thread::spawn(move || -> Result<()> {
+        // Handle stdin
         while let Some(Ok(byte)) = tty_input.next() {
             pty_output.write(&[byte])?;
             pty_output.flush()?;
