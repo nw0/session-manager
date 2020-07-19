@@ -25,6 +25,7 @@ enum Range {
 pub struct Grid {
     cursor_x: u16,
     cursor_y: u16,
+    saved_cursor: (u16, u16),
     width: u16,
     height: u16,
     buffer: Vec<Cell>,
@@ -41,6 +42,7 @@ impl Grid {
         Grid {
             cursor_x: 0,
             cursor_y: 0,
+            saved_cursor: (0, 0),
             width,
             height,
             buffer,
@@ -148,6 +150,15 @@ impl Grid {
         for i in start..end {
             self.buffer[i] = Cell::default();
         }
+    }
+
+    fn cursor_save(&mut self) {
+        self.saved_cursor = (self.cursor_x, self.cursor_y);
+    }
+
+    fn cursor_restore(&mut self) {
+        self.move_horizontal(Displace::Absolute(self.saved_cursor.0 as i64));
+        self.move_vertical(Displace::Absolute(self.saved_cursor.1 as i64));
     }
 
     pub fn set_current(&mut self, c: char) {
@@ -347,6 +358,11 @@ impl Perform for Grid {
                 2 => self.erase_line(Range::Full),
                 _ => unhandled!("EL"),
             },
+            csi::SM => debug!("SM (unimpl)"),
+            csi::RM => debug!("RM (unimpl)"),
+            csi::SGR => debug!("SGR (unimpl)"),
+            csi::SAVEC => self.cursor_save(),
+            csi::RESTC => self.cursor_restore(),
             _ => unhandled!("_"),
         }
     }
