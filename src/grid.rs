@@ -29,11 +29,12 @@ pub struct Grid {
     width: u16,
     height: u16,
     buffer: Vec<Cell>,
+    pty_file: File,
 }
 
 impl Grid {
     /// Initialise an empty display buffer.
-    pub fn new(width: u16, height: u16) -> Grid {
+    pub fn new(width: u16, height: u16, pty_file: File) -> Grid {
         let sz = width * height;
         let mut buffer = Vec::with_capacity(sz as usize);
         for _ in 0..sz {
@@ -46,6 +47,7 @@ impl Grid {
             width,
             height,
             buffer,
+            pty_file,
         }
     }
 
@@ -68,7 +70,7 @@ impl Grid {
             self.cursor_x = 0;
             self.cursor_y += 1;
             if self.cursor_y == self.height {
-                self.scroll(1);
+                self.scroll_down(1);
                 self.cursor_y -= 1;
             }
         }
@@ -164,8 +166,22 @@ impl Grid {
         self.buffer[(x + y * self.width) as usize].c
     }
 
-    /// Scroll up (sorry, no scrolling down yet).
-    fn scroll(&mut self, lines: u16) {
+    fn scroll_up(&mut self, lines: u16) {
+        if lines < 1 {
+            return;
+        }
+        for y in self.height..0 {
+            for x in 0..self.width {
+                if y > lines {
+                    self.set_cell(self.get_cell(x, y - lines - 1), x, y - 1);
+                } else {
+                    self.set_cell('.', x, y - 1);
+                }
+            }
+        }
+    }
+
+    fn scroll_down(&mut self, lines: u16) {
         if lines < 1 {
             return;
         }
@@ -178,6 +194,21 @@ impl Grid {
                 }
             }
         }
+    }
+
+    fn report_status(&mut self) {
+        let buf = [cc::ESC, b'[', b'0', b'n'];
+        self.pty_file.write_all(&buf).unwrap();
+    }
+
+    fn report_cursor(&mut self) {
+        self.pty_file
+            .write_fmt(format_args!(
+                "\x1b[{};{}R",
+                self.cursor_y + 1,
+                self.cursor_x + 1
+            ))
+            .unwrap();
     }
 }
 
@@ -205,6 +236,7 @@ mod cc {
 
     pub const CAN: u8 = 0x18;
     pub const SUB: u8 = 0x1a;
+    pub const ESC: u8 = 0x1b;
     pub const DEL: u8 = 0x7f;
 }
 
@@ -227,6 +259,8 @@ mod csi {
     pub const IL: char = 'L';
     pub const DL: char = 'M';
     pub const DCH: char = 'P';
+    pub const SU: char = 'S';
+    pub const SD: char = 'T';
     pub const ECH: char = 'X';
     pub const HPR: char = 'a';
     pub const DA: char = 'c';
@@ -258,7 +292,7 @@ impl Perform for Grid {
             cc::LF | cc::VT | cc::FF => {
                 self.cursor_y += 1;
                 if self.cursor_y == self.height {
-                    self.scroll(1);
+                    self.scroll_down(1);
                     self.cursor_y -= 1;
                 }
             }
@@ -336,21 +370,28 @@ impl Perform for Grid {
                 self.move_horizontal(Displace::Absolute(param!(1, 1) - 1));
                 self.move_vertical(Displace::Absolute(param!(0, 1) - 1));
             }
-            csi::ED => match params[0] {
+            csi::ED => match param!(0, 0) {
                 0 => self.erase_display(Range::FromCursor),
                 1 => self.erase_display(Range::ToCursor),
                 2 | 3 => self.erase_display(Range::Full),
                 _ => unhandled!("ED"),
             },
-            csi::EL => match params[0] {
+            csi::EL => match param!(0, 0) {
                 0 => self.erase_line(Range::FromCursor),
                 1 => self.erase_line(Range::ToCursor),
                 2 => self.erase_line(Range::Full),
                 _ => unhandled!("EL"),
             },
+            csi::SU => self.scroll_up(param!(0, 1) as u16),
+            csi::SD => self.scroll_down(param!(0, 1) as u16),
             csi::SM => debug!("SM (unimpl)"),
             csi::RM => debug!("RM (unimpl)"),
             csi::SGR => debug!("SGR (unimpl)"),
+            csi::DSR => match param!(0, 0) {
+                5 => self.report_status(),
+                6 => self.report_cursor(),
+                _ => unhandled!("DSR"),
+            },
             csi::SAVEC => self.cursor_save(),
             csi::RESTC => self.cursor_restore(),
             _ => unhandled!("_"),
