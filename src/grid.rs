@@ -70,7 +70,6 @@ impl Grid {
             self.cursor_x = 0;
             self.cursor_y += 1;
             if self.cursor_y == self.height {
-                self.scroll_down(1);
                 self.cursor_y -= 1;
             }
         }
@@ -181,6 +180,7 @@ impl Grid {
         }
     }
 
+    // Move viewport down (text up)
     fn scroll_down(&mut self, lines: u16) {
         if lines < 1 {
             return;
@@ -191,6 +191,22 @@ impl Grid {
                     self.set_cell(self.get_cell(x, y + lines), x, y);
                 } else {
                     self.set_cell('.', x, y);
+                }
+            }
+        }
+    }
+
+    fn insert_line(&mut self, lines: u16) {
+        // Move this line down...
+        if lines < 1 {
+            return;
+        }
+        for y in self.height..self.cursor_y {
+            for x in 0..self.width {
+                if y > lines + self.cursor_y {
+                    self.set_cell(self.get_cell(x, y - lines - 1), x, y - 1);
+                } else {
+                    self.set_cell('.', x, y - 1);
                 }
             }
         }
@@ -238,6 +254,11 @@ mod cc {
     pub const SUB: u8 = 0x1a;
     pub const ESC: u8 = 0x1b;
     pub const DEL: u8 = 0x7f;
+}
+
+/// ESC sequences.
+mod esc {
+    pub const RI: u8 = b'M';
 }
 
 /// CSI sequences.
@@ -382,6 +403,7 @@ impl Perform for Grid {
                 2 => self.erase_line(Range::Full),
                 _ => unhandled!("EL"),
             },
+            csi::IL => self.insert_line(param!(0, 1) as u16),
             csi::SU => self.scroll_up(param!(0, 1) as u16),
             csi::SD => self.scroll_down(param!(0, 1) as u16),
             csi::SM => debug!("SM (unimpl)"),
@@ -399,9 +421,18 @@ impl Perform for Grid {
     }
 
     fn esc_dispatch(&mut self, intermediates: &[u8], ignore: bool, byte: u8) {
-        debug!(
-            "[esc_dispatch] intermediates={:?}, ignore={:?}, byte={:02x}",
-            intermediates, ignore, byte
-        );
+        match byte {
+            esc::RI => {
+                if self.cursor_y == 0 {
+                    self.scroll_up(1);
+                } else {
+                    self.cursor_y -= 1;
+                }
+            }
+            _ => debug!(
+                "[esc_dispatch] intermediates={:?}, ignore={:?}, byte={:02x}",
+                intermediates, ignore, byte
+            ),
+        }
     }
 }
