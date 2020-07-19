@@ -309,6 +309,14 @@ impl Perform for Grid {
     }
 
     fn csi_dispatch(&mut self, params: &[i64], intermediates: &[u8], ignore: bool, action: char) {
+        macro_rules! unhandled {
+            ($note:expr) => {
+                debug!(
+                    "[csi_dispatch] ({}) params={:?}, intermediates={:?}, ignore={:?}, char={:?}",
+                    $note, params, intermediates, ignore, action
+                );
+            };
+        }
         macro_rules! param {
             ($idx:expr, $default:expr) => {
                 match params.get($idx).unwrap_or(&0) {
@@ -317,6 +325,7 @@ impl Perform for Grid {
                 }
             };
         }
+
         match action {
             csi::CUU => self.move_vertical(Displace::Relative(-param!(0, 1))),
             csi::CUD => self.move_vertical(Displace::Relative(param!(0, 1))),
@@ -330,30 +339,15 @@ impl Perform for Grid {
                 0 => self.erase_display(Range::FromCursor),
                 1 => self.erase_display(Range::ToCursor),
                 2 | 3 => self.erase_display(Range::Full),
-                _ => {
-                    debug!(
-            "[csi_dispatch] (J) params={:?}, intermediates={:?}, ignore={:?}, char={:?}",
-            params, intermediates, ignore, action
-        );
-                }
+                _ => unhandled!("ED"),
             },
             csi::EL => match params[0] {
                 0 => self.erase_line(Range::FromCursor),
                 1 => self.erase_line(Range::ToCursor),
                 2 => self.erase_line(Range::Full),
-                _ => {
-                    debug!(
-            "[csi_dispatch] (K) params={:?}, intermediates={:?}, ignore={:?}, char={:?}",
-            params, intermediates, ignore, action
-        );
-                }
+                _ => unhandled!("EL"),
             },
-            _ => {
-                debug!(
-                    "[csi_dispatch] params={:?}, intermediates={:?}, ignore={:?}, char={:?}",
-                    params, intermediates, ignore, action
-                );
-            }
+            _ => unhandled!("_"),
         }
     }
 
