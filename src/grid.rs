@@ -51,21 +51,11 @@ impl Grid {
 
     /// Draw this buffer to `term`.
     pub fn draw(&self, term: &mut RawTerminal<File>) {
-        for row in 0..self.height {
-            let row_start = (row * self.width) as usize;
-            let row_end = ((row + 1) * self.width) as usize;
-            let row_chars = self.buffer[row_start..row_end].iter().map(|c| c.c);
-            write!(
-                term,
-                "{}{}",
-                termion::cursor::Goto(1, 1 + row),
-                row_chars.collect::<String>()
-            )
-            .unwrap();
-        }
         write!(
             term,
-            "{}",
+            "{}{}{}",
+            termion::cursor::Goto(1, 1),
+            self.buffer.iter().map(|c| c.c).collect::<String>(),
             termion::cursor::Goto(1 + self.cursor_x, 1 + self.cursor_y)
         )
         .unwrap();
