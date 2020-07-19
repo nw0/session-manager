@@ -309,30 +309,22 @@ impl Perform for Grid {
     }
 
     fn csi_dispatch(&mut self, params: &[i64], intermediates: &[u8], ignore: bool, action: char) {
-        match action {
-            csi::CUU => {
-                let n = std::cmp::max(1, params[0]) as u16;
-                self.cursor_y = std::cmp::max(0, self.cursor_y - n);
-            }
-            csi::CUD => {
-                let n = std::cmp::max(1, params[0]) as u16;
-                self.cursor_y = std::cmp::min(self.height - 1, self.cursor_y - n);
-            }
-            csi::CUF => {
-                let n = std::cmp::max(1, params[0]);
-                self.move_horizontal(Displace::Relative(n));
-            }
-            csi::CUB => {
-                let n = std::cmp::max(1, params[0]);
-                self.move_horizontal(Displace::Relative(-n))
-            }
-            csi::CUP => {
-                self.move_vertical(Displace::Absolute(params[0] - 1));
-                if params.len() > 1 {
-                    self.move_horizontal(Displace::Absolute(params[1] - 1));
-                } else {
-                    self.move_horizontal(Displace::Absolute(0));
+        macro_rules! param {
+            ($idx:expr, $default:expr) => {
+                match params.get($idx).unwrap_or(&0) {
+                    0 => $default,
+                    v => *v,
                 }
+            };
+        }
+        match action {
+            csi::CUU => self.move_vertical(Displace::Relative(-param!(0, 1))),
+            csi::CUD => self.move_vertical(Displace::Relative(param!(0, 1))),
+            csi::CUF => self.move_horizontal(Displace::Relative(param!(0, 1))),
+            csi::CUB => self.move_horizontal(Displace::Relative(-param!(0, 1))),
+            csi::CUP => {
+                self.move_horizontal(Displace::Absolute(param!(1, 1) - 1));
+                self.move_vertical(Displace::Absolute(param!(0, 1) - 1));
             }
             csi::ED => match params[0] {
                 0 => self.erase_display(Range::FromCursor),
