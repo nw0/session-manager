@@ -34,13 +34,13 @@ impl Console {
         let (sender, status) = channel();
         let child_pty = ChildPty::new(command, size)?;
         let mut pty_output = child_pty.file.try_clone().unwrap().bytes();
-        let pty_input = child_pty.file.try_clone().unwrap();
+        let mut pty_input = child_pty.file.try_clone().unwrap();
         let mut parser = Processor::new();
-        let mut grid = Grid::new(size.ws_col, size.ws_row, pty_input);
+        let mut grid = Grid::new(size.ws_col, size.ws_row);
 
         thread::spawn(move || {
             while let Some(Ok(byte)) = pty_output.next() {
-                parser.advance(&mut grid, byte, &mut ());
+                parser.advance(&mut grid, byte, &mut pty_input);
                 grid.draw(&mut output_stream);
             }
             sender.send(true).unwrap();

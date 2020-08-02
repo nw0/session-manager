@@ -33,12 +33,11 @@ pub struct Grid {
     width: u16,
     height: u16,
     buffer: Vec<Cell>,
-    pty_file: File,
 }
 
 impl Grid {
     /// Initialise an empty display buffer.
-    pub fn new(width: u16, height: u16, pty_file: File) -> Grid {
+    pub fn new(width: u16, height: u16) -> Grid {
         let sz = width * height;
         let mut buffer = Vec::with_capacity(sz as usize);
         for _ in 0..sz {
@@ -52,7 +51,6 @@ impl Grid {
             width,
             height,
             buffer,
-            pty_file,
         }
     }
 
@@ -252,25 +250,24 @@ impl Grid {
         }
     }
 
-    fn report_status(&mut self) {
+    fn report_status(&mut self, file: &mut File) {
         const ESC: u8 = 0x1b;
         let buf = [ESC, b'[', b'0', b'n'];
-        self.pty_file.write_all(&buf).unwrap();
+        file.write_all(&buf).unwrap();
     }
 
-    fn report_cursor(&mut self) {
+    fn report_cursor(&mut self, file: &mut File) {
         trace!("cursor at ({} + 1, {} + 1)", self.cursor_x, self.cursor_y);
-        self.pty_file
-            .write_fmt(format_args!(
-                "\x1b[{};{}R",
-                self.cursor_y + 1,
-                self.cursor_x + 1
-            ))
-            .unwrap();
+        file.write_fmt(format_args!(
+            "\x1b[{};{}R",
+            self.cursor_y + 1,
+            self.cursor_x + 1
+        ))
+        .unwrap();
     }
 }
 
-impl Handler<()> for Grid {
+impl Handler<File> for Grid {
     fn set_title(&mut self, title: Option<&str>) {
         // TODO
         info!("set title: {:?}", title);
@@ -311,14 +308,14 @@ impl Handler<()> for Grid {
         self.move_vertical(Displace::Relative(i64::try_from(rows).unwrap()));
     }
 
-    fn identify_terminal(&mut self, _: &mut (), _intermediate: Option<char>) {
+    fn identify_terminal(&mut self, _: &mut File, _intermediate: Option<char>) {
         // TODO
     }
 
-    fn device_status(&mut self, _: &mut (), param: usize) {
+    fn device_status(&mut self, file: &mut File, param: usize) {
         match param {
-            5 => self.report_status(),
-            6 => self.report_cursor(),
+            5 => self.report_status(file),
+            6 => self.report_cursor(file),
             _ => debug!("invalid device status report {}", param),
         }
     }
@@ -528,7 +525,7 @@ impl Handler<()> for Grid {
         debug!("set color");
     }
 
-    fn dynamic_color_sequence(&mut self, _: &mut (), _: u8, _: usize, _: &str) {
+    fn dynamic_color_sequence(&mut self, _: &mut File, _: u8, _: usize, _: &str) {
         debug!("write color seq");
     }
 
