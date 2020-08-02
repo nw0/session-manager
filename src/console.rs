@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
 use std::thread;
 use termion::raw::RawTerminal;
-use vte::Parser;
+use vte::ansi::Processor;
 
 use crate::grid::Grid;
 
@@ -35,12 +35,12 @@ impl Console {
         let child_pty = ChildPty::new(command, size)?;
         let mut pty_output = child_pty.file.try_clone().unwrap().bytes();
         let pty_input = child_pty.file.try_clone().unwrap();
-        let mut parser = Parser::new();
+        let mut parser = Processor::new();
         let mut grid = Grid::new(size.ws_col, size.ws_row, pty_input);
 
         thread::spawn(move || {
             while let Some(Ok(byte)) = pty_output.next() {
-                parser.advance(&mut grid, byte);
+                parser.advance(&mut grid, byte, &mut ());
                 grid.draw(&mut output_stream);
             }
             sender.send(true).unwrap();

@@ -1,11 +1,14 @@
 //! Console buffer implementation.
 use log::{debug, info, warn};
 use std::cmp::{max, min};
-use std::convert::TryInto;
+use std::convert::{TryFrom, TryInto};
 use std::fs::File;
 use std::io::Write;
 use termion::raw::RawTerminal;
-use vte::Perform;
+use vte::ansi::{
+    Attr, CharsetIndex, ClearMode, CursorStyle, Handler, LineClearMode, Mode, Rgb, StandardCharset,
+    TabulationClearMode,
+};
 
 enum Displace {
     Absolute(i64),
@@ -196,6 +199,23 @@ impl Grid {
         }
     }
 
+    fn insert_col(&mut self, cols: u16) {
+        if cols < 1 {
+            return;
+        }
+        for x in self.width..self.cursor_x {
+            if x > cols + self.cursor_x {
+                self.set_cell(
+                    self.get_cell(x - cols - 1, self.cursor_y),
+                    x - 1,
+                    self.cursor_y,
+                );
+            } else {
+                self.set_cell('.', x - 1, self.cursor_y);
+            }
+        }
+    }
+
     fn insert_line(&mut self, lines: u16) {
         // Move this line down...
         if lines < 1 {
@@ -213,7 +233,8 @@ impl Grid {
     }
 
     fn report_status(&mut self) {
-        let buf = [cc::ESC, b'[', b'0', b'n'];
+        const ESC: u8 = 0x1b;
+        let buf = [ESC, b'[', b'0', b'n'];
         self.pty_file.write_all(&buf).unwrap();
     }
 
@@ -228,6 +249,271 @@ impl Grid {
     }
 }
 
+impl Handler<()> for Grid {
+    fn set_title(&mut self, title: Option<&str>) {
+        // TODO
+        info!("set title: {:?}", title);
+    }
+
+    fn set_cursor_style(&mut self, _: Option<CursorStyle>) {
+        // TODO
+    }
+
+    fn input(&mut self, c: char) {
+        // TODO: handle c.width() != 1
+        self.update(c);
+    }
+
+    fn goto(&mut self, row: usize, col: usize) {
+        // TODO: change Displace type
+        self.move_horizontal(Displace::Absolute((col).try_into().unwrap()));
+        self.move_vertical(Displace::Absolute((row).try_into().unwrap()));
+    }
+
+    fn goto_line(&mut self, row: usize) {
+        self.move_vertical(Displace::Absolute((row - 1).try_into().unwrap()));
+    }
+
+    fn goto_col(&mut self, col: usize) {
+        self.move_horizontal(Displace::Absolute((col - 1).try_into().unwrap()));
+    }
+
+    fn insert_blank(&mut self, cols: usize) {
+        self.insert_col(u16::try_from(cols).unwrap());
+    }
+
+    fn move_up(&mut self, rows: usize) {
+        self.move_vertical(Displace::Relative(-i64::try_from(rows).unwrap()));
+    }
+
+    fn move_down(&mut self, rows: usize) {
+        self.move_vertical(Displace::Relative(i64::try_from(rows).unwrap()));
+    }
+
+    fn identify_terminal(&mut self, _: &mut (), _intermediate: Option<char>) {
+        // TODO
+    }
+
+    fn device_status(&mut self, _: &mut (), param: usize) {
+        match param {
+            5 => self.report_status(),
+            6 => self.report_cursor(),
+            _ => debug!("invalid device status report {}", param),
+        }
+    }
+
+    fn move_forward(&mut self, cols: usize) {
+        self.move_horizontal(Displace::Relative(i64::try_from(cols).unwrap()));
+    }
+
+    fn move_backward(&mut self, cols: usize) {
+        self.move_horizontal(Displace::Relative(-i64::try_from(cols).unwrap()));
+    }
+
+    fn move_down_and_cr(&mut self, rows: usize) {
+        self.move_vertical(Displace::Relative(i64::try_from(rows).unwrap()));
+        self.move_horizontal(Displace::ToStart);
+    }
+
+    fn move_up_and_cr(&mut self, rows: usize) {
+        self.move_vertical(Displace::Relative(-i64::try_from(rows).unwrap()));
+        self.move_horizontal(Displace::ToStart);
+    }
+
+    fn put_tab(&mut self, count: i64) {
+        // FIXME
+        for _ in 0..count {
+            self.move_horizontal(Displace::ToTabStop);
+        }
+    }
+
+    fn backspace(&mut self) {
+        self.move_horizontal(Displace::Relative(-1));
+    }
+
+    fn carriage_return(&mut self) {
+        self.move_horizontal(Displace::ToStart);
+    }
+
+    fn linefeed(&mut self) {
+        self.cursor_y += 1;
+        if self.cursor_y == self.height {
+            self.scroll_down(1);
+            self.cursor_y -= 1;
+        }
+    }
+
+    fn bell(&mut self) {
+        info!("BEL");
+    }
+
+    fn substitute(&mut self) {}
+
+    fn newline(&mut self) {
+        self.linefeed();
+    }
+
+    fn set_horizontal_tabstop(&mut self) {
+        // TODO
+    }
+
+    fn scroll_up(&mut self, rows: usize) {
+        self.scroll_up(u16::try_from(rows).unwrap());
+    }
+
+    fn scroll_down(&mut self, rows: usize) {
+        self.scroll_down(u16::try_from(rows).unwrap());
+    }
+
+    fn insert_blank_lines(&mut self, rows: usize) {
+        self.insert_line(u16::try_from(rows).unwrap());
+    }
+
+    fn delete_lines(&mut self, rows: usize) {
+        let rows = u16::try_from(rows).unwrap();
+        if rows < 1 {
+            return;
+        }
+        for y in self.cursor_y..self.height {
+            for x in 0..self.width {
+                if y < self.cursor_y + rows {
+                    self.set_cell(self.get_cell(x, y + rows), x, y);
+                } else {
+                    self.set_cell('.', x, y);
+                }
+            }
+        }
+    }
+
+    fn erase_chars(&mut self, cols: usize) {
+        let cols = u16::try_from(cols).unwrap();
+        for x1 in 0..cols {
+            let x = self.cursor_x + x1;
+            if x < self.width {
+                self.set_cell('.', x, self.cursor_y);
+            }
+        }
+    }
+
+    fn delete_chars(&mut self, cols: usize) {
+        let cols = u16::try_from(cols).unwrap();
+        for x in self.cursor_x..self.width {
+            if x + cols < self.width {
+                self.set_cell(self.get_cell(x + cols, self.cursor_y), x, self.cursor_y);
+            } else {
+                self.set_cell('.', x, self.cursor_y);
+            }
+        }
+    }
+
+    fn move_backward_tabs(&mut self, _count: i64) {
+        // TODO
+    }
+
+    fn move_forward_tabs(&mut self, count: i64) {
+        for _ in 0..count {
+            self.move_horizontal(Displace::ToTabStop);
+        }
+    }
+
+    fn save_cursor_position(&mut self) {
+        self.cursor_save();
+    }
+
+    fn restore_cursor_position(&mut self) {
+        self.cursor_restore();
+    }
+
+    fn clear_line(&mut self, mode: LineClearMode) {
+        match mode {
+            LineClearMode::All => self.erase_line(Range::Full),
+            LineClearMode::Left => self.erase_line(Range::ToCursor),
+            LineClearMode::Right => self.erase_line(Range::FromCursor),
+        }
+    }
+
+    fn clear_screen(&mut self, mode: ClearMode) {
+        match mode {
+            ClearMode::All | ClearMode::Saved => self.erase_display(Range::Full),
+            ClearMode::Above => self.erase_display(Range::ToCursor),
+            ClearMode::Below => self.erase_display(Range::FromCursor),
+        }
+    }
+
+    fn clear_tabs(&mut self, _mode: TabulationClearMode) {
+        // TODO
+    }
+
+    fn reset_state(&mut self) {
+        // TODO
+    }
+
+    fn reverse_index(&mut self) {
+        if self.cursor_y == 0 {
+            self.scroll_up(1);
+        } else {
+            self.cursor_y -= 1;
+        }
+    }
+
+    fn terminal_attribute(&mut self, _attr: Attr) {
+        // TODO
+    }
+
+    fn set_mode(&mut self, mode: Mode) {
+        // TODO
+        debug!("set mode: {:?}", mode);
+    }
+
+    fn unset_mode(&mut self, mode: Mode) {
+        // TODO
+        debug!("unset mode: {:?}", mode);
+    }
+
+    fn set_scrolling_region(&mut self, top: usize, bottom: Option<usize>) {
+        // TODO
+        debug!("set scroll region: {:?} - {:?}", top, bottom)
+    }
+
+    fn set_keypad_application_mode(&mut self) {
+        debug!("set keypad");
+    }
+
+    fn unset_keypad_application_mode(&mut self) {
+        debug!("unset keypad");
+    }
+
+    fn set_active_charset(&mut self, _: CharsetIndex) {
+        debug!("set charset");
+    }
+
+    fn configure_charset(&mut self, _: CharsetIndex, _: StandardCharset) {
+        debug!("config charset");
+    }
+
+    fn set_color(&mut self, _: usize, _: Rgb) {
+        debug!("set color");
+    }
+
+    fn dynamic_color_sequence(&mut self, _: &mut (), _: u8, _: usize, _: &str) {
+        debug!("write color seq");
+    }
+
+    fn reset_color(&mut self, _: usize) {
+        debug!("reset color");
+    }
+
+    fn clipboard_store(&mut self, _: u8, _: &[u8]) {}
+
+    fn clipboard_load(&mut self, _: u8, _: &str) {}
+
+    fn decaln(&mut self) {}
+
+    fn push_title(&mut self) {}
+
+    fn pop_title(&mut self) {}
+}
+
 struct Cell {
     pub c: char,
 }
@@ -235,204 +521,5 @@ struct Cell {
 impl Cell {
     pub fn default() -> Cell {
         Cell { c: '.' }
-    }
-}
-
-/// Control character constants.
-mod cc {
-    pub const BEL: u8 = 0x07;
-    pub const BS: u8 = 0x08;
-    pub const HT: u8 = 0x09;
-    pub const LF: u8 = 0x0a;
-    pub const VT: u8 = 0x0b;
-    pub const FF: u8 = 0x0c;
-    pub const CR: u8 = 0x0d;
-    pub const SO: u8 = 0x0e;
-    pub const SI: u8 = 0x0f;
-
-    pub const CAN: u8 = 0x18;
-    pub const SUB: u8 = 0x1a;
-    pub const ESC: u8 = 0x1b;
-    pub const DEL: u8 = 0x7f;
-}
-
-/// ESC sequences.
-mod esc {
-    pub const RI: u8 = b'M';
-}
-
-/// CSI sequences.
-///
-/// `char` used for compatibility with `csi_dispatch`.
-// from ECMA-48, via `man console_codes` -- some missing?
-mod csi {
-    pub const ICH: char = '@';
-    pub const CUU: char = 'A';
-    pub const CUD: char = 'B';
-    pub const CUF: char = 'C';
-    pub const CUB: char = 'D';
-    pub const CNL: char = 'E';
-    pub const CPL: char = 'F';
-    pub const CHA: char = 'G';
-    pub const CUP: char = 'H';
-    pub const ED: char = 'J';
-    pub const EL: char = 'K';
-    pub const IL: char = 'L';
-    pub const DL: char = 'M';
-    pub const DCH: char = 'P';
-    pub const SU: char = 'S';
-    pub const SD: char = 'T';
-    pub const ECH: char = 'X';
-    pub const HPR: char = 'a';
-    pub const DA: char = 'c';
-    pub const VPA: char = 'd';
-    pub const VPR: char = 'e';
-    pub const HVP: char = 'f';
-    pub const TBC: char = 'g';
-    pub const SM: char = 'h';
-    pub const RM: char = 'l';
-    pub const SGR: char = 'm';
-    pub const DSR: char = 'n';
-    pub const DECLL: char = 'q';
-    pub const DECSTBM: char = 'r';
-    pub const SAVEC: char = 's'; // not official name
-    pub const RESTC: char = 'u'; // not official name
-    pub const HPA: char = '`';
-}
-
-impl Perform for Grid {
-    fn print(&mut self, c: char) {
-        self.update(c);
-    }
-
-    fn execute(&mut self, byte: u8) {
-        match byte {
-            cc::BEL => info!("BEL"),
-            cc::BS => self.move_horizontal(Displace::Relative(-1)),
-            cc::HT => self.move_horizontal(Displace::ToTabStop),
-            cc::LF | cc::VT | cc::FF => {
-                self.cursor_y += 1;
-                if self.cursor_y == self.height {
-                    self.scroll_down(1);
-                    self.cursor_y -= 1;
-                }
-            }
-            cc::CR => self.move_horizontal(Displace::ToStart),
-            cc::SO => info!("unimpl: exec SO"),
-            cc::SI => info!("unimpl: exec SI"),
-            cc::CAN => debug!("unimpl: exec CAN"),
-            cc::SUB => debug!("unimpl: exec SUB"),
-            cc::DEL => debug!("DEL"),
-            _ => {
-                debug!("[execute] {:02x}", byte);
-            }
-        }
-    }
-
-    fn hook(&mut self, params: &[i64], intermediates: &[u8], ignore: bool, c: char) {
-        debug!(
-            "[hook] params={:?}, intermediates={:?}, ignore={:?}, char={:?}",
-            params, intermediates, ignore, c
-        );
-    }
-
-    fn put(&mut self, byte: u8) {
-        debug!("[put] {:02x}", byte);
-    }
-
-    fn unhook(&mut self) {
-        debug!("[unhook]");
-    }
-
-    fn osc_dispatch(&mut self, params: &[&[u8]], bell_terminated: bool) {
-        if !params.is_empty() {
-            match params[0] {
-                b"0" | b"2" => {
-                    if let Ok(title) = std::str::from_utf8(params[1]) {
-                        info!("[osc] set title: \"{}\"", title)
-                    }
-                }
-                _ => {
-                    debug!(
-                        "[osc_dispatch] params={:?} bell_terminated={}",
-                        params, bell_terminated
-                    );
-                }
-            }
-        } else {
-            debug!("empty OSC sequence");
-        }
-    }
-
-    fn csi_dispatch(&mut self, params: &[i64], intermediates: &[u8], ignore: bool, action: char) {
-        macro_rules! unhandled {
-            ($note:expr) => {
-                debug!(
-                    "[csi_dispatch] ({}) params={:?}, intermediates={:?}, ignore={:?}, char={:?}",
-                    $note, params, intermediates, ignore, action
-                );
-            };
-        }
-        macro_rules! param {
-            ($idx:expr, $default:expr) => {
-                match params.get($idx).unwrap_or(&0) {
-                    0 => $default,
-                    v => *v,
-                }
-            };
-        }
-
-        match action {
-            csi::CUU => self.move_vertical(Displace::Relative(-param!(0, 1))),
-            csi::CUD => self.move_vertical(Displace::Relative(param!(0, 1))),
-            csi::CUF => self.move_horizontal(Displace::Relative(param!(0, 1))),
-            csi::CUB => self.move_horizontal(Displace::Relative(-param!(0, 1))),
-            csi::CUP => {
-                self.move_horizontal(Displace::Absolute(param!(1, 1) - 1));
-                self.move_vertical(Displace::Absolute(param!(0, 1) - 1));
-            }
-            csi::ED => match param!(0, 0) {
-                0 => self.erase_display(Range::FromCursor),
-                1 => self.erase_display(Range::ToCursor),
-                2 | 3 => self.erase_display(Range::Full),
-                _ => unhandled!("ED"),
-            },
-            csi::EL => match param!(0, 0) {
-                0 => self.erase_line(Range::FromCursor),
-                1 => self.erase_line(Range::ToCursor),
-                2 => self.erase_line(Range::Full),
-                _ => unhandled!("EL"),
-            },
-            csi::IL => self.insert_line(param!(0, 1) as u16),
-            csi::SU => self.scroll_up(param!(0, 1) as u16),
-            csi::SD => self.scroll_down(param!(0, 1) as u16),
-            csi::SM => debug!("SM (unimpl)"),
-            csi::RM => debug!("RM (unimpl)"),
-            csi::SGR => debug!("SGR (unimpl)"),
-            csi::DSR => match param!(0, 0) {
-                5 => self.report_status(),
-                6 => self.report_cursor(),
-                _ => unhandled!("DSR"),
-            },
-            csi::SAVEC => self.cursor_save(),
-            csi::RESTC => self.cursor_restore(),
-            _ => unhandled!("_"),
-        }
-    }
-
-    fn esc_dispatch(&mut self, intermediates: &[u8], ignore: bool, byte: u8) {
-        match byte {
-            esc::RI => {
-                if self.cursor_y == 0 {
-                    self.scroll_up(1);
-                } else {
-                    self.cursor_y -= 1;
-                }
-            }
-            _ => debug!(
-                "[esc_dispatch] intermediates={:?}, ignore={:?}, byte={:02x}",
-                intermediates, ignore, byte
-            ),
-        }
     }
 }
