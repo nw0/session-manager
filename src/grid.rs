@@ -168,23 +168,8 @@ impl Grid {
         self.buffer[(x + y * self.width) as usize].c
     }
 
-    fn scroll_up(&mut self, lines: u16) {
-        if lines < 1 {
-            return;
-        }
-        for y in self.height..0 {
-            for x in 0..self.width {
-                if y > lines {
-                    self.set_cell(self.get_cell(x, y - lines - 1), x, y - 1);
-                } else {
-                    self.set_cell('.', x, y - 1);
-                }
-            }
-        }
-    }
-
-    // Move viewport down (text up)
-    fn scroll_down(&mut self, lines: u16) {
+    fn scroll_up_in_region(&mut self, lines: u16) {
+        // Move text UP
         if lines < 1 {
             return;
         }
@@ -194,6 +179,22 @@ impl Grid {
                     self.set_cell(self.get_cell(x, y + lines), x, y);
                 } else {
                     self.set_cell('.', x, y);
+                }
+            }
+        }
+    }
+
+    fn scroll_down_in_region(&mut self, lines: u16) {
+        // Move text DOWN
+        if lines < 1 {
+            return;
+        }
+        for y in self.height..0 {
+            for x in 0..self.width {
+                if y > lines {
+                    self.set_cell(self.get_cell(x, y - lines - 1), x, y - 1);
+                } else {
+                    self.set_cell('.', x, y - 1);
                 }
             }
         }
@@ -336,10 +337,12 @@ impl Handler<()> for Grid {
     }
 
     fn linefeed(&mut self) {
-        self.cursor_y += 1;
-        if self.cursor_y == self.height {
-            self.scroll_down(1);
-            self.cursor_y -= 1;
+        if self.cursor_y + 1 == self.scrolling_region.1 {
+            self.scroll_up(1);
+        } else if self.cursor_y + 1 < self.height {
+            self.cursor_y += 1;
+        } else {
+            debug!("tried to scroll past end of grid");
         }
     }
 
@@ -358,11 +361,11 @@ impl Handler<()> for Grid {
     }
 
     fn scroll_up(&mut self, rows: usize) {
-        self.scroll_up(u16::try_from(rows).unwrap());
+        self.scroll_up_in_region(u16::try_from(rows).unwrap());
     }
 
     fn scroll_down(&mut self, rows: usize) {
-        self.scroll_down(u16::try_from(rows).unwrap());
+        self.scroll_down_in_region(u16::try_from(rows).unwrap());
     }
 
     fn insert_blank_lines(&mut self, rows: usize) {
