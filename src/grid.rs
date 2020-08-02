@@ -29,6 +29,7 @@ pub struct Grid {
     cursor_x: u16,
     cursor_y: u16,
     saved_cursor: (u16, u16),
+    scrolling_region: (u16, u16),
     width: u16,
     height: u16,
     buffer: Vec<Cell>,
@@ -47,6 +48,7 @@ impl Grid {
             cursor_x: 0,
             cursor_y: 0,
             saved_cursor: (0, 0),
+            scrolling_region: (0, height),
             width,
             height,
             buffer,
@@ -173,9 +175,9 @@ impl Grid {
         if lines < 1 {
             return;
         }
-        for y in 0..self.height {
+        for y in self.scrolling_region.0..self.scrolling_region.1 {
             for x in 0..self.width {
-                if y + lines < self.height {
+                if y + lines < self.scrolling_region.1 {
                     self.set_cell(self.get_cell(x, y + lines), x, y);
                 } else {
                     self.set_cell('.', x, y);
@@ -189,12 +191,12 @@ impl Grid {
         if lines < 1 {
             return;
         }
-        for y in self.height..0 {
+        for y in (self.scrolling_region.0..self.scrolling_region.1).rev() {
             for x in 0..self.width {
-                if y > lines {
-                    self.set_cell(self.get_cell(x, y - lines - 1), x, y - 1);
+                if y >= lines + self.scrolling_region.0 {
+                    self.set_cell(self.get_cell(x, y - lines), x, y);
                 } else {
-                    self.set_cell('.', x, y - 1);
+                    self.set_cell('.', x, y);
                 }
             }
         }
@@ -219,15 +221,18 @@ impl Grid {
 
     fn insert_line(&mut self, lines: u16) {
         // Move this line down...
-        if lines < 1 {
+        if lines < 1
+            || self.cursor_y < self.scrolling_region.0
+            || self.cursor_y >= self.scrolling_region.1
+        {
             return;
         }
-        for y in self.height..self.cursor_y {
+        for y in (self.cursor_y..self.scrolling_region.1).rev() {
             for x in 0..self.width {
-                if y > lines + self.cursor_y {
-                    self.set_cell(self.get_cell(x, y - lines - 1), x, y - 1);
+                if y >= lines + self.cursor_y {
+                    self.set_cell(self.get_cell(x, y - lines), x, y);
                 } else {
-                    self.set_cell('.', x, y - 1);
+                    self.set_cell('.', x, y);
                 }
             }
         }
@@ -474,8 +479,15 @@ impl Handler<()> for Grid {
     }
 
     fn set_scrolling_region(&mut self, top: usize, bottom: Option<usize>) {
-        // TODO
-        debug!("set scroll region: {:?} - {:?}", top, bottom)
+        // set scrolling region to [Pt, Pb] (1-indexed).
+        debug!("set scroll region: {:?} - {:?}", top, bottom);
+
+        let bottom = bottom.unwrap_or(self.height as usize);
+        self.scrolling_region = (
+            u16::try_from(top - 1).unwrap(),
+            u16::try_from(bottom).unwrap(),
+        );
+        self.goto(0, 0);
     }
 
     fn set_keypad_application_mode(&mut self) {
