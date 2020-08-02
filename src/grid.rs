@@ -1,5 +1,5 @@
 //! Console buffer implementation.
-use log::{debug, info, warn};
+use log::{debug, info, trace, warn};
 use std::cmp::{max, min};
 use std::convert::{TryFrom, TryInto};
 use std::fs::File;
@@ -172,6 +172,10 @@ impl Grid {
 
     fn scroll_up_in_region(&mut self, lines: u16) {
         // Move text UP
+        trace!(
+            "scroll UP, region: ({:?}, lines: {})",
+            self.scrolling_region, lines
+        );
         if lines < 1 {
             return;
         }
@@ -188,6 +192,10 @@ impl Grid {
 
     fn scroll_down_in_region(&mut self, lines: u16) {
         // Move text DOWN
+        trace!(
+            "scroll DOWN, region: ({:?}), lines: {}",
+            self.scrolling_region, lines
+        );
         if lines < 1 {
             return;
         }
@@ -220,6 +228,12 @@ impl Grid {
     }
 
     fn insert_line(&mut self, lines: u16) {
+        trace!(
+            "INSERT LINES {}, from {} in {:?}",
+            lines,
+            self.cursor_y,
+            self.scrolling_region
+        );
         // Move this line down...
         if lines < 1
             || self.cursor_y < self.scrolling_region.0
@@ -245,6 +259,7 @@ impl Grid {
     }
 
     fn report_cursor(&mut self) {
+        trace!("cursor at ({} + 1, {} + 1)", self.cursor_x, self.cursor_y);
         self.pty_file
             .write_fmt(format_args!(
                 "\x1b[{};{}R",
@@ -374,10 +389,12 @@ impl Handler<()> for Grid {
     }
 
     fn insert_blank_lines(&mut self, rows: usize) {
+        trace!("IL: {}", rows);
         self.insert_line(u16::try_from(rows).unwrap());
     }
 
     fn delete_lines(&mut self, rows: usize) {
+        trace!("DL: {}", rows);
         let rows = u16::try_from(rows).unwrap();
         if rows < 1 {
             return;
@@ -457,6 +474,7 @@ impl Handler<()> for Grid {
     }
 
     fn reverse_index(&mut self) {
+        trace!("RI");
         if self.cursor_y == 0 {
             self.scroll_up(1);
         } else {
