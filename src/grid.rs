@@ -24,11 +24,19 @@ enum Range {
     ToCursor,
 }
 
+/// Zero-indexed cursor position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct CursorPos {
+    /// The x-coordinate.
+    col: u16,
+    /// The y-coordinate.
+    row: u16,
+}
+
 /// The display buffer of a console.
 pub struct Grid {
-    cursor_x: u16,
-    cursor_y: u16,
-    saved_cursor: (u16, u16),
+    cursor: CursorPos,
+    saved_cursor: CursorPos,
     scrolling_region: (u16, u16),
     width: u16,
     height: u16,
@@ -44,9 +52,8 @@ impl Grid {
             buffer.push(Cell::default());
         }
         Grid {
-            cursor_x: 0,
-            cursor_y: 0,
-            saved_cursor: (0, 0),
+            cursor: Default::default(),
+            saved_cursor: Default::default(),
             scrolling_region: (0, height),
             width,
             height,
@@ -61,19 +68,19 @@ impl Grid {
             "{}{}{}",
             termion::cursor::Goto(1, 1),
             self.buffer.iter().map(|c| c.c).collect::<String>(),
-            termion::cursor::Goto(1 + self.cursor_x, 1 + self.cursor_y)
+            termion::cursor::Goto(1 + self.cursor.col, 1 + self.cursor.row)
         )
         .unwrap();
     }
 
     pub fn update(&mut self, c: char) {
-        self.buffer[(self.cursor_x + self.cursor_y * self.width) as usize].c = c;
-        self.cursor_x += 1;
-        if self.cursor_x == self.width {
-            self.cursor_x = 0;
-            self.cursor_y += 1;
-            if self.cursor_y == self.height {
-                self.cursor_y -= 1;
+        self.buffer[(self.cursor.col + self.cursor.row * self.width) as usize].c = c;
+        self.cursor.col += 1;
+        if self.cursor.col == self.width {
+            self.cursor.col = 0;
+            self.cursor.row += 1;
+            if self.cursor.row == self.height {
+                self.cursor.row -= 1;
             }
         }
     }
@@ -84,29 +91,30 @@ impl Grid {
     }
 
     fn move_horizontal(&mut self, displacement: Displace) {
-        self.cursor_x = match displacement {
+        self.cursor.col = match displacement {
             Displace::Absolute(offset) => max(0, min(self.width as i64 - 1, offset)),
-            Displace::Relative(offset) => {
-                max(0, min(self.width as i64 - 1, self.cursor_x as i64 + offset))
-            }
+            Displace::Relative(offset) => max(
+                0,
+                min(self.width as i64 - 1, self.cursor.col as i64 + offset),
+            ),
             Displace::ToStart => 0,
-            Displace::ToTabStop => ((self.cursor_x + 8) & !7).into(),
+            Displace::ToTabStop => ((self.cursor.col + 8) & !7).into(),
         }
         .try_into()
         .unwrap();
     }
 
     fn move_vertical(&mut self, displacement: Displace) {
-        self.cursor_y = match displacement {
+        self.cursor.row = match displacement {
             Displace::Absolute(offset) => max(0, min(self.height as i64 - 1, offset)),
             Displace::Relative(offset) => max(
                 0,
-                min(self.height as i64 - 1, self.cursor_y as i64 + offset),
+                min(self.height as i64 - 1, self.cursor.row as i64 + offset),
             ),
             Displace::ToStart => 0,
             Displace::ToTabStop => {
                 warn!("unimpl: vertical tab");
-                self.cursor_y.into()
+                self.cursor.row.into()
             }
         }
         .try_into()
@@ -116,12 +124,12 @@ impl Grid {
 
     fn erase_display(&mut self, range: Range) {
         let start = if range == Range::FromCursor {
-            self.buffer_idx(self.cursor_x, self.cursor_y)
+            self.buffer_idx(self.cursor.col, self.cursor.row)
         } else {
             0
         };
         let end = if range == Range::ToCursor {
-            self.buffer_idx(self.cursor_x, self.cursor_y)
+            self.buffer_idx(self.cursor.col, self.cursor.row)
         } else {
             self.buffer.len()
         };
@@ -132,14 +140,14 @@ impl Grid {
 
     fn erase_line(&mut self, range: Range) {
         let start = if range == Range::FromCursor {
-            self.buffer_idx(self.cursor_x, self.cursor_y)
+            self.buffer_idx(self.cursor.col, self.cursor.row)
         } else {
-            self.buffer_idx(0, self.cursor_y)
+            self.buffer_idx(0, self.cursor.row)
         };
         let end = if range == Range::ToCursor {
-            self.buffer_idx(self.cursor_x, self.cursor_y)
+            self.buffer_idx(self.cursor.col, self.cursor.row)
         } else {
-            self.buffer_idx(self.width - 1, self.cursor_y)
+            self.buffer_idx(self.width - 1, self.cursor.row)
         };
         for i in start..end {
             self.buffer[i] = Cell::default();
@@ -147,16 +155,11 @@ impl Grid {
     }
 
     fn cursor_save(&mut self) {
-        self.saved_cursor = (self.cursor_x, self.cursor_y);
+        self.saved_cursor = self.cursor;
     }
 
     fn cursor_restore(&mut self) {
-        self.move_horizontal(Displace::Absolute(self.saved_cursor.0 as i64));
-        self.move_vertical(Displace::Absolute(self.saved_cursor.1 as i64));
-    }
-
-    pub fn set_current(&mut self, c: char) {
-        self.set_cell(c, self.cursor_x, self.cursor_y);
+        self.cursor = self.saved_cursor;
     }
 
     pub fn set_cell(&mut self, c: char, x: u16, y: u16) {
@@ -212,15 +215,11 @@ impl Grid {
         if cols < 1 {
             return;
         }
-        for x in self.width..self.cursor_x {
-            if x > cols + self.cursor_x {
-                self.set_cell(
-                    self.get_cell(x - cols - 1, self.cursor_y),
-                    x - 1,
-                    self.cursor_y,
-                );
+        for x in (self.cursor.col..self.width).rev() {
+            if x >= cols + self.cursor.col {
+                self.set_cell(self.get_cell(x - cols, self.cursor.row), x, self.cursor.row);
             } else {
-                self.set_cell('.', x - 1, self.cursor_y);
+                self.set_cell('.', x, self.cursor.row);
             }
         }
     }
@@ -229,19 +228,19 @@ impl Grid {
         trace!(
             "INSERT LINES {}, from {} in {:?}",
             lines,
-            self.cursor_y,
+            self.cursor.row,
             self.scrolling_region
         );
         // Move this line down...
         if lines < 1
-            || self.cursor_y < self.scrolling_region.0
-            || self.cursor_y >= self.scrolling_region.1
+            || self.cursor.row < self.scrolling_region.0
+            || self.cursor.row >= self.scrolling_region.1
         {
             return;
         }
-        for y in (self.cursor_y..self.scrolling_region.1).rev() {
+        for y in (self.cursor.row..self.scrolling_region.1).rev() {
             for x in 0..self.width {
-                if y >= lines + self.cursor_y {
+                if y >= lines + self.cursor.row {
                     self.set_cell(self.get_cell(x, y - lines), x, y);
                 } else {
                     self.set_cell('.', x, y);
@@ -257,11 +256,15 @@ impl Grid {
     }
 
     fn report_cursor(&mut self, file: &mut File) {
-        trace!("cursor at ({} + 1, {} + 1)", self.cursor_x, self.cursor_y);
+        trace!(
+            "cursor at ({} + 1, {} + 1)",
+            self.cursor.col,
+            self.cursor.row
+        );
         file.write_fmt(format_args!(
             "\x1b[{};{}R",
-            self.cursor_y + 1,
-            self.cursor_x + 1
+            self.cursor.row + 1,
+            self.cursor.col + 1
         ))
         .unwrap();
     }
@@ -289,11 +292,11 @@ impl Handler<File> for Grid {
     }
 
     fn goto_line(&mut self, row: usize) {
-        self.move_vertical(Displace::Absolute((row - 1).try_into().unwrap()));
+        self.move_vertical(Displace::Absolute(row.try_into().unwrap()));
     }
 
     fn goto_col(&mut self, col: usize) {
-        self.move_horizontal(Displace::Absolute((col - 1).try_into().unwrap()));
+        self.move_horizontal(Displace::Absolute(col.try_into().unwrap()));
     }
 
     fn insert_blank(&mut self, cols: usize) {
@@ -354,10 +357,10 @@ impl Handler<File> for Grid {
     }
 
     fn linefeed(&mut self) {
-        if self.cursor_y + 1 == self.scrolling_region.1 {
+        if self.cursor.row + 1 == self.scrolling_region.1 {
             self.scroll_up(1);
-        } else if self.cursor_y + 1 < self.height {
-            self.cursor_y += 1;
+        } else if self.cursor.row + 1 < self.height {
+            self.cursor.row += 1;
         } else {
             debug!("tried to scroll past end of grid");
         }
@@ -396,9 +399,9 @@ impl Handler<File> for Grid {
         if rows < 1 {
             return;
         }
-        for y in self.cursor_y..self.height {
+        for y in self.cursor.row..self.height {
             for x in 0..self.width {
-                if y < self.cursor_y + rows {
+                if y < self.cursor.row + rows {
                     self.set_cell(self.get_cell(x, y + rows), x, y);
                 } else {
                     self.set_cell('.', x, y);
@@ -410,20 +413,20 @@ impl Handler<File> for Grid {
     fn erase_chars(&mut self, cols: usize) {
         let cols = u16::try_from(cols).unwrap();
         for x1 in 0..cols {
-            let x = self.cursor_x + x1;
+            let x = self.cursor.col + x1;
             if x < self.width {
-                self.set_cell('.', x, self.cursor_y);
+                self.set_cell('.', x, self.cursor.row);
             }
         }
     }
 
     fn delete_chars(&mut self, cols: usize) {
         let cols = u16::try_from(cols).unwrap();
-        for x in self.cursor_x..self.width {
+        for x in self.cursor.col..self.width {
             if x + cols < self.width {
-                self.set_cell(self.get_cell(x + cols, self.cursor_y), x, self.cursor_y);
+                self.set_cell(self.get_cell(x + cols, self.cursor.row), x, self.cursor.row);
             } else {
-                self.set_cell('.', x, self.cursor_y);
+                self.set_cell('.', x, self.cursor.row);
             }
         }
     }
@@ -472,10 +475,10 @@ impl Handler<File> for Grid {
 
     fn reverse_index(&mut self) {
         trace!("RI");
-        if self.cursor_y == self.scrolling_region.0 {
+        if self.cursor.row == self.scrolling_region.0 {
             self.scroll_down(1);
         } else {
-            self.cursor_y -= 1;
+            self.cursor.row -= 1;
         }
     }
 
@@ -551,5 +554,33 @@ struct Cell {
 impl Cell {
     pub fn default() -> Cell {
         Cell { c: '.' }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn goto() {
+        let mut grid = Grid::new(4, 4);
+        grid.goto(1, 1);
+        assert_eq!(grid.cursor, CursorPos { col: 1, row: 1 });
+        grid.move_up_and_cr(1);
+        assert_eq!(grid.cursor, CursorPos { col: 0, row: 0 });
+        grid.move_down(6);
+        assert_eq!(grid.cursor, CursorPos { col: 0, row: 3 });
+    }
+
+    #[test]
+    fn linefeed() {
+        let mut grid = Grid::new(4, 2);
+        grid.goto(0, 1);
+        grid.linefeed();
+        assert_eq!(grid.cursor, CursorPos { col: 1, row: 1 });
+        grid.linefeed();
+        assert_eq!(grid.cursor, CursorPos { col: 1, row: 1 });
+        grid.reverse_index();
+        assert_eq!(grid.cursor, CursorPos { col: 1, row: 0 });
     }
 }
