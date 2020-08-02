@@ -4,10 +4,11 @@ use std::cmp::{max, min};
 use std::convert::{TryFrom, TryInto};
 use std::fs::File;
 use std::io::Write;
+use std::marker::PhantomData;
 use termion::raw::RawTerminal;
 use vte::ansi::{
-    Attr, CharsetIndex, ClearMode, CursorStyle, Handler, LineClearMode, Mode, Rgb, StandardCharset,
-    TabulationClearMode,
+    Attr, CharsetIndex, ClearMode, CursorStyle, Handler, LineClearMode, Mode, Rgb,
+    StandardCharset, TabulationClearMode,
 };
 
 enum Displace {
@@ -15,13 +16,6 @@ enum Displace {
     Relative(i64),
     ToStart,
     ToTabStop,
-}
-
-#[derive(Eq, PartialEq)]
-enum Range {
-    Full,
-    FromCursor,
-    ToCursor,
 }
 
 /// Zero-indexed cursor position.
@@ -33,19 +27,27 @@ struct CursorPos {
     row: u16,
 }
 
+impl CursorPos {
+    /// Note that this is col, row (x, y).
+    fn at(col: u16, row: u16) -> CursorPos {
+        CursorPos { col, row }
+    }
+}
+
 /// The display buffer of a console.
-pub struct Grid {
+pub struct Grid<W> {
     cursor: CursorPos,
     saved_cursor: CursorPos,
     scrolling_region: (u16, u16),
     width: u16,
     height: u16,
     buffer: Vec<Cell>,
+    _phantom: PhantomData<W>,
 }
 
-impl Grid {
+impl<W: Write> Grid<W> {
     /// Initialise an empty display buffer.
-    pub fn new(width: u16, height: u16) -> Grid {
+    pub fn new(width: u16, height: u16) -> Grid<W> {
         let sz = width * height;
         let mut buffer = Vec::with_capacity(sz as usize);
         for _ in 0..sz {
@@ -58,6 +60,7 @@ impl Grid {
             width,
             height,
             buffer,
+            _phantom: Default::default(),
         }
     }
 
@@ -73,21 +76,18 @@ impl Grid {
         .unwrap();
     }
 
-    pub fn update(&mut self, c: char) {
-        self.buffer[(self.cursor.col + self.cursor.row * self.width) as usize].c = c;
-        self.cursor.col += 1;
-        if self.cursor.col == self.width {
-            self.cursor.col = 0;
-            self.cursor.row += 1;
-            if self.cursor.row == self.height {
-                self.cursor.row -= 1;
-            }
-        }
+    fn buffer_idx(&self, pos: CursorPos) -> usize {
+        // TODO: check row, col are in bounds
+        (pos.col + pos.row * self.width).into()
     }
 
-    fn buffer_idx(&self, x: u16, y: u16) -> usize {
-        // TODO: x >= width, y >= height?
-        (x + y * self.width).into()
+    fn cell_at(&self, pos: CursorPos) -> &Cell {
+        &self.buffer[self.buffer_idx(pos)]
+    }
+
+    fn cell_at_mut(&mut self, pos: CursorPos) -> &mut Cell {
+        let idx = self.buffer_idx(pos);
+        &mut self.buffer[idx]
     }
 
     fn move_horizontal(&mut self, displacement: Displace) {
@@ -122,71 +122,24 @@ impl Grid {
         // no scrolling
     }
 
-    fn erase_display(&mut self, range: Range) {
-        let start = if range == Range::FromCursor {
-            self.buffer_idx(self.cursor.col, self.cursor.row)
-        } else {
-            0
-        };
-        let end = if range == Range::ToCursor {
-            self.buffer_idx(self.cursor.col, self.cursor.row)
-        } else {
-            self.buffer.len()
-        };
-        for i in start..end {
-            self.buffer[i] = Cell::default();
-        }
-    }
-
-    fn erase_line(&mut self, range: Range) {
-        let start = if range == Range::FromCursor {
-            self.buffer_idx(self.cursor.col, self.cursor.row)
-        } else {
-            self.buffer_idx(0, self.cursor.row)
-        };
-        let end = if range == Range::ToCursor {
-            self.buffer_idx(self.cursor.col, self.cursor.row)
-        } else {
-            self.buffer_idx(self.width - 1, self.cursor.row)
-        };
-        for i in start..end {
-            self.buffer[i] = Cell::default();
-        }
-    }
-
-    fn cursor_save(&mut self) {
-        self.saved_cursor = self.cursor;
-    }
-
-    fn cursor_restore(&mut self) {
-        self.cursor = self.saved_cursor;
-    }
-
-    pub fn set_cell(&mut self, c: char, x: u16, y: u16) {
-        // TODO: check x < width, y < height
-        self.buffer[(x + y * self.width) as usize].c = c;
-    }
-
-    pub fn get_cell(&self, x: u16, y: u16) -> char {
-        self.buffer[(x + y * self.width) as usize].c
-    }
-
     fn scroll_up_in_region(&mut self, lines: u16) {
         // Move text UP
         trace!(
             "scroll UP, region: ({:?}, lines: {})",
-            self.scrolling_region, lines
+            self.scrolling_region,
+            lines
         );
         if lines < 1 {
             return;
         }
-        for y in self.scrolling_region.0..self.scrolling_region.1 {
-            for x in 0..self.width {
-                if y + lines < self.scrolling_region.1 {
-                    self.set_cell(self.get_cell(x, y + lines), x, y);
-                } else {
-                    self.set_cell('.', x, y);
-                }
+        for row in self.scrolling_region.0..self.scrolling_region.1 {
+            for col in 0..self.width {
+                *self.cell_at_mut(CursorPos { col, row }) =
+                    if row + lines < self.scrolling_region.1 {
+                        *self.cell_at(CursorPos::at(col, row + lines))
+                    } else {
+                        Cell::default()
+                    };
             }
         }
     }
@@ -195,18 +148,20 @@ impl Grid {
         // Move text DOWN
         trace!(
             "scroll DOWN, region: ({:?}), lines: {}",
-            self.scrolling_region, lines
+            self.scrolling_region,
+            lines
         );
         if lines < 1 {
             return;
         }
-        for y in (self.scrolling_region.0..self.scrolling_region.1).rev() {
-            for x in 0..self.width {
-                if y >= lines + self.scrolling_region.0 {
-                    self.set_cell(self.get_cell(x, y - lines), x, y);
-                } else {
-                    self.set_cell('.', x, y);
-                }
+        for row in (self.scrolling_region.0..self.scrolling_region.1).rev() {
+            for col in 0..self.width {
+                *self.cell_at_mut(CursorPos { col, row }) =
+                    if row >= lines + self.scrolling_region.0 {
+                        *self.cell_at(CursorPos::at(col, row - lines))
+                    } else {
+                        Cell::default()
+                    };
             }
         }
     }
@@ -215,12 +170,13 @@ impl Grid {
         if cols < 1 {
             return;
         }
-        for x in (self.cursor.col..self.width).rev() {
-            if x >= cols + self.cursor.col {
-                self.set_cell(self.get_cell(x - cols, self.cursor.row), x, self.cursor.row);
-            } else {
-                self.set_cell('.', x, self.cursor.row);
-            }
+        for col in (self.cursor.col..self.width).rev() {
+            *self.cell_at_mut(CursorPos::at(col, self.cursor.row)) =
+                if col >= cols + self.cursor.col {
+                    *self.cell_at(CursorPos::at(col - cols, self.cursor.row))
+                } else {
+                    Cell::default()
+                };
         }
     }
 
@@ -238,39 +194,20 @@ impl Grid {
         {
             return;
         }
-        for y in (self.cursor.row..self.scrolling_region.1).rev() {
-            for x in 0..self.width {
-                if y >= lines + self.cursor.row {
-                    self.set_cell(self.get_cell(x, y - lines), x, y);
-                } else {
-                    self.set_cell('.', x, y);
-                }
+        for row in (self.cursor.row..self.scrolling_region.1).rev() {
+            for col in 0..self.width {
+                *self.cell_at_mut(CursorPos { col, row }) =
+                    if row >= lines + self.cursor.row {
+                        *self.cell_at(CursorPos::at(col, row - lines))
+                    } else {
+                        Cell::default()
+                    };
             }
         }
     }
-
-    fn report_status(&mut self, file: &mut File) {
-        const ESC: u8 = 0x1b;
-        let buf = [ESC, b'[', b'0', b'n'];
-        file.write_all(&buf).unwrap();
-    }
-
-    fn report_cursor(&mut self, file: &mut File) {
-        trace!(
-            "cursor at ({} + 1, {} + 1)",
-            self.cursor.col,
-            self.cursor.row
-        );
-        file.write_fmt(format_args!(
-            "\x1b[{};{}R",
-            self.cursor.row + 1,
-            self.cursor.col + 1
-        ))
-        .unwrap();
-    }
 }
 
-impl Handler<File> for Grid {
+impl<W: Write> Handler<W> for Grid<W> {
     fn set_title(&mut self, title: Option<&str>) {
         // TODO
         info!("set title: {:?}", title);
@@ -282,7 +219,18 @@ impl Handler<File> for Grid {
 
     fn input(&mut self, c: char) {
         // TODO: handle c.width() != 1
-        self.update(c);
+        self.cell_at_mut(self.cursor).c = c;
+        self.cursor.col += 1;
+        if self.cursor.col == self.width {
+            // FIXME: want to change this to self.linefeed, but it breaks tmux
+            // I suspect we only want to linefeed if there is actual input on the next row
+            // TODO: test case for this scenario
+            self.cursor.row += 1;
+            if self.cursor.row == self.scrolling_region.1 {
+                self.cursor.row -= 1;
+            }
+            self.carriage_return();
+        }
     }
 
     fn goto(&mut self, row: usize, col: usize) {
@@ -311,14 +259,29 @@ impl Handler<File> for Grid {
         self.move_vertical(Displace::Relative(i64::try_from(rows).unwrap()));
     }
 
-    fn identify_terminal(&mut self, _: &mut File, _intermediate: Option<char>) {
+    fn identify_terminal(&mut self, _: &mut W, _intermediate: Option<char>) {
         // TODO
     }
 
-    fn device_status(&mut self, file: &mut File, param: usize) {
+    fn device_status(&mut self, file: &mut W, param: usize) {
         match param {
-            5 => self.report_status(file),
-            6 => self.report_cursor(file),
+            5 => {
+                let buf = [0x1b, b'[', b'0', b'n'];
+                file.write_all(&buf).unwrap();
+            }
+            6 => {
+                trace!(
+                    "cursor at ({} + 1, {} + 1)",
+                    self.cursor.col,
+                    self.cursor.row
+                );
+                file.write_fmt(format_args!(
+                    "\x1b[{};{}R",
+                    self.cursor.row + 1,
+                    self.cursor.col + 1
+                ))
+                .unwrap();
+            }
             _ => debug!("invalid device status report {}", param),
         }
     }
@@ -396,16 +359,20 @@ impl Handler<File> for Grid {
     fn delete_lines(&mut self, rows: usize) {
         trace!("DL: {}", rows);
         let rows = u16::try_from(rows).unwrap();
-        if rows < 1 {
+        if rows < 1
+            || self.cursor.row < self.scrolling_region.0
+            || self.cursor.row >= self.scrolling_region.1
+        {
             return;
         }
-        for y in self.cursor.row..self.height {
-            for x in 0..self.width {
-                if y < self.cursor.row + rows {
-                    self.set_cell(self.get_cell(x, y + rows), x, y);
-                } else {
-                    self.set_cell('.', x, y);
-                }
+        for row in self.cursor.row..self.scrolling_region.1 {
+            for col in 0..self.width {
+                *self.cell_at_mut(CursorPos { col, row }) =
+                    if row < self.cursor.row + rows {
+                        *self.cell_at(CursorPos::at(col, row + rows))
+                    } else {
+                        Cell::default()
+                    };
             }
         }
     }
@@ -413,21 +380,23 @@ impl Handler<File> for Grid {
     fn erase_chars(&mut self, cols: usize) {
         let cols = u16::try_from(cols).unwrap();
         for x1 in 0..cols {
-            let x = self.cursor.col + x1;
-            if x < self.width {
-                self.set_cell('.', x, self.cursor.row);
+            let col = self.cursor.col + x1;
+            if col < self.width {
+                *self.cell_at_mut(CursorPos::at(col, self.cursor.row)) =
+                    Cell::default();
             }
         }
     }
 
     fn delete_chars(&mut self, cols: usize) {
         let cols = u16::try_from(cols).unwrap();
-        for x in self.cursor.col..self.width {
-            if x + cols < self.width {
-                self.set_cell(self.get_cell(x + cols, self.cursor.row), x, self.cursor.row);
-            } else {
-                self.set_cell('.', x, self.cursor.row);
-            }
+        for col in self.cursor.col..self.width {
+            *self.cell_at_mut(CursorPos::at(col, self.cursor.row)) =
+                if col + cols < self.width {
+                    *self.cell_at(CursorPos::at(col + cols, self.cursor.row))
+                } else {
+                    Cell::default()
+                };
         }
     }
 
@@ -442,27 +411,51 @@ impl Handler<File> for Grid {
     }
 
     fn save_cursor_position(&mut self) {
-        self.cursor_save();
+        self.saved_cursor = self.cursor;
     }
 
     fn restore_cursor_position(&mut self) {
-        self.cursor_restore();
+        self.cursor = self.saved_cursor;
     }
 
     fn clear_line(&mut self, mode: LineClearMode) {
-        match mode {
-            LineClearMode::All => self.erase_line(Range::Full),
-            LineClearMode::Left => self.erase_line(Range::ToCursor),
-            LineClearMode::Right => self.erase_line(Range::FromCursor),
-        }
+        let range = match mode {
+            LineClearMode::All => {
+                self.buffer_idx(CursorPos {
+                    col: 0,
+                    row: self.cursor.row,
+                })..self.buffer_idx(CursorPos {
+                    col: self.width,
+                    row: self.cursor.row,
+                })
+            }
+            LineClearMode::Left => {
+                self.buffer_idx(CursorPos {
+                    col: 0,
+                    row: self.cursor.row,
+                })..self.buffer_idx(self.cursor)
+            }
+            LineClearMode::Right => {
+                self.buffer_idx(self.cursor)..self.buffer_idx(CursorPos {
+                    col: self.width,
+                    row: self.cursor.row,
+                })
+            }
+        };
+        self.buffer[range]
+            .iter_mut()
+            .for_each(|i| *i = Cell::default());
     }
 
     fn clear_screen(&mut self, mode: ClearMode) {
-        match mode {
-            ClearMode::All | ClearMode::Saved => self.erase_display(Range::Full),
-            ClearMode::Above => self.erase_display(Range::ToCursor),
-            ClearMode::Below => self.erase_display(Range::FromCursor),
-        }
+        let range = match mode {
+            ClearMode::All | ClearMode::Saved => 0..self.buffer.len(),
+            ClearMode::Above => 0..self.buffer_idx(self.cursor),
+            ClearMode::Below => self.buffer_idx(self.cursor)..self.buffer.len(),
+        };
+        self.buffer[range]
+            .iter_mut()
+            .for_each(|i| *i = Cell::default());
     }
 
     fn clear_tabs(&mut self, _mode: TabulationClearMode) {
@@ -528,7 +521,7 @@ impl Handler<File> for Grid {
         debug!("set color");
     }
 
-    fn dynamic_color_sequence(&mut self, _: &mut File, _: u8, _: usize, _: &str) {
+    fn dynamic_color_sequence(&mut self, _: &mut W, _: u8, _: usize, _: &str) {
         debug!("write color seq");
     }
 
@@ -547,6 +540,7 @@ impl Handler<File> for Grid {
     fn pop_title(&mut self) {}
 }
 
+#[derive(Clone, Copy)]
 struct Cell {
     pub c: char,
 }
@@ -561,9 +555,13 @@ impl Cell {
 mod tests {
     use super::*;
 
+    use std::io::{Read, Sink};
+    use std::str;
+    use tempfile::NamedTempFile;
+
     #[test]
     fn goto() {
-        let mut grid = Grid::new(4, 4);
+        let mut grid = Grid::<Sink>::new(4, 4);
         grid.goto(1, 1);
         assert_eq!(grid.cursor, CursorPos { col: 1, row: 1 });
         grid.move_up_and_cr(1);
@@ -574,7 +572,7 @@ mod tests {
 
     #[test]
     fn linefeed() {
-        let mut grid = Grid::new(4, 2);
+        let mut grid = Grid::<Sink>::new(4, 2);
         grid.goto(0, 1);
         grid.linefeed();
         assert_eq!(grid.cursor, CursorPos { col: 1, row: 1 });
@@ -583,4 +581,39 @@ mod tests {
         grid.reverse_index();
         assert_eq!(grid.cursor, CursorPos { col: 1, row: 0 });
     }
+
+    #[test]
+    fn cursor_save() {
+        let mut grid = Grid::<Sink>::new(4, 4);
+        let original = grid.cursor;
+        grid.save_cursor_position();
+        grid.linefeed();
+        grid.input('c');
+        grid.restore_cursor_position();
+        assert_eq!(grid.cursor, original);
+    }
+
+    #[test]
+    fn report() {
+        let mut sink = NamedTempFile::new().unwrap();
+        let mut source = sink.reopen().unwrap();
+        let mut grid = Grid::new(4, 4);
+        let mut buf = Vec::new();
+
+        grid.device_status(&mut sink, 12); // invalid
+        source.read_to_end(&mut buf).unwrap();
+        assert_eq!(buf.len(), 0);
+
+        grid.device_status(&mut sink, 5);
+        source.read_to_end(&mut buf).unwrap();
+        assert_eq!(str::from_utf8(&buf).unwrap(), "\x1b[0n"); // Terminal OK
+
+        buf.clear();
+        grid.goto(2, 3);
+        grid.device_status(&mut sink, 6);
+        source.read_to_end(&mut buf).unwrap();
+        assert_eq!(str::from_utf8(&buf).unwrap(), "\x1b[3;4R"); // 1-indexed cursor pos
+    }
+
+    // TODO: test input/draw
 }
