@@ -475,8 +475,8 @@ impl Handler<()> for Grid {
 
     fn reverse_index(&mut self) {
         trace!("RI");
-        if self.cursor_y == 0 {
-            self.scroll_up(1);
+        if self.cursor_y == self.scrolling_region.0 {
+            self.scroll_down(1);
         } else {
             self.cursor_y -= 1;
         }
@@ -503,7 +503,7 @@ impl Handler<()> for Grid {
         let bottom = bottom.unwrap_or(self.height as usize);
         self.scrolling_region = (
             u16::try_from(top - 1).unwrap(),
-            u16::try_from(bottom).unwrap(),
+            min(u16::try_from(bottom).unwrap(), self.height),
         );
         self.goto(0, 0);
     }
