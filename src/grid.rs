@@ -5,6 +5,7 @@ use std::convert::{TryFrom, TryInto};
 use std::fs::File;
 use std::io::Write;
 use std::marker::PhantomData;
+use std::ops::Range;
 use termion::raw::RawTerminal;
 use vte::ansi::{
     Attr, CharsetIndex, ClearMode, CursorStyle, Handler, LineClearMode, Mode, Rgb,
@@ -38,7 +39,7 @@ impl CursorPos {
 pub struct Grid<W> {
     cursor: CursorPos,
     saved_cursor: CursorPos,
-    scrolling_region: (u16, u16),
+    scrolling_region: Range<u16>,
     width: u16,
     height: u16,
     buffer: Vec<Cell>,
@@ -56,7 +57,7 @@ impl<W: Write> Grid<W> {
         Grid {
             cursor: Default::default(),
             saved_cursor: Default::default(),
-            scrolling_region: (0, height),
+            scrolling_region: 0..height,
             width,
             height,
             buffer,
@@ -122,7 +123,7 @@ impl<W: Write> Grid<W> {
         // no scrolling
     }
 
-    fn scroll_up_in_region(&mut self, lines: u16) {
+    fn scroll_up_in_region(&mut self, start: u16, lines: u16) {
         // Move text UP
         trace!(
             "scroll UP, region: ({:?}, lines: {})",
@@ -132,10 +133,10 @@ impl<W: Write> Grid<W> {
         if lines < 1 {
             return;
         }
-        for row in self.scrolling_region.0..self.scrolling_region.1 {
+        for row in start..self.scrolling_region.end {
             for col in 0..self.width {
                 *self.cell_at_mut(CursorPos { col, row }) =
-                    if row + lines < self.scrolling_region.1 {
+                    if row + lines < self.scrolling_region.end {
                         *self.cell_at(CursorPos::at(col, row + lines))
                     } else {
                         Cell::default()
@@ -144,7 +145,7 @@ impl<W: Write> Grid<W> {
         }
     }
 
-    fn scroll_down_in_region(&mut self, lines: u16) {
+    fn scroll_down_in_region(&mut self, start: u16, lines: u16) {
         // Move text DOWN
         trace!(
             "scroll DOWN, region: ({:?}), lines: {}",
@@ -154,54 +155,13 @@ impl<W: Write> Grid<W> {
         if lines < 1 {
             return;
         }
-        for row in (self.scrolling_region.0..self.scrolling_region.1).rev() {
+        for row in (start..self.scrolling_region.end).rev() {
             for col in 0..self.width {
-                *self.cell_at_mut(CursorPos { col, row }) =
-                    if row >= lines + self.scrolling_region.0 {
-                        *self.cell_at(CursorPos::at(col, row - lines))
-                    } else {
-                        Cell::default()
-                    };
-            }
-        }
-    }
-
-    fn insert_col(&mut self, cols: u16) {
-        if cols < 1 {
-            return;
-        }
-        for col in (self.cursor.col..self.width).rev() {
-            *self.cell_at_mut(CursorPos::at(col, self.cursor.row)) =
-                if col >= cols + self.cursor.col {
-                    *self.cell_at(CursorPos::at(col - cols, self.cursor.row))
+                *self.cell_at_mut(CursorPos { col, row }) = if row >= lines + start {
+                    *self.cell_at(CursorPos::at(col, row - lines))
                 } else {
                     Cell::default()
                 };
-        }
-    }
-
-    fn insert_line(&mut self, lines: u16) {
-        trace!(
-            "INSERT LINES {}, from {} in {:?}",
-            lines,
-            self.cursor.row,
-            self.scrolling_region
-        );
-        // Move this line down...
-        if lines < 1
-            || self.cursor.row < self.scrolling_region.0
-            || self.cursor.row >= self.scrolling_region.1
-        {
-            return;
-        }
-        for row in (self.cursor.row..self.scrolling_region.1).rev() {
-            for col in 0..self.width {
-                *self.cell_at_mut(CursorPos { col, row }) =
-                    if row >= lines + self.cursor.row {
-                        *self.cell_at(CursorPos::at(col, row - lines))
-                    } else {
-                        Cell::default()
-                    };
             }
         }
     }
@@ -226,7 +186,7 @@ impl<W: Write> Handler<W> for Grid<W> {
             // I suspect we only want to linefeed if there is actual input on the next row
             // TODO: test case for this scenario
             self.cursor.row += 1;
-            if self.cursor.row == self.scrolling_region.1 {
+            if self.cursor.row == self.scrolling_region.end {
                 self.cursor.row -= 1;
             }
             self.carriage_return();
@@ -248,7 +208,18 @@ impl<W: Write> Handler<W> for Grid<W> {
     }
 
     fn insert_blank(&mut self, cols: usize) {
-        self.insert_col(u16::try_from(cols).unwrap());
+        let cols = u16::try_from(cols).unwrap();
+        if cols < 1 {
+            return;
+        }
+        for col in (self.cursor.col..self.width).rev() {
+            *self.cell_at_mut(CursorPos::at(col, self.cursor.row)) =
+                if col >= cols + self.cursor.col {
+                    *self.cell_at(CursorPos::at(col - cols, self.cursor.row))
+                } else {
+                    Cell::default()
+                };
+        }
     }
 
     fn move_up(&mut self, rows: usize) {
@@ -320,7 +291,7 @@ impl<W: Write> Handler<W> for Grid<W> {
     }
 
     fn linefeed(&mut self) {
-        if self.cursor.row + 1 == self.scrolling_region.1 {
+        if self.cursor.row + 1 == self.scrolling_region.end {
             self.scroll_up(1);
         } else if self.cursor.row + 1 < self.height {
             self.cursor.row += 1;
@@ -344,37 +315,34 @@ impl<W: Write> Handler<W> for Grid<W> {
     }
 
     fn scroll_up(&mut self, rows: usize) {
-        self.scroll_up_in_region(u16::try_from(rows).unwrap());
+        self.scroll_up_in_region(
+            self.scrolling_region.start,
+            u16::try_from(rows).unwrap(),
+        );
     }
 
     fn scroll_down(&mut self, rows: usize) {
-        self.scroll_down_in_region(u16::try_from(rows).unwrap());
+        self.scroll_down_in_region(
+            self.scrolling_region.start,
+            u16::try_from(rows).unwrap(),
+        );
     }
 
     fn insert_blank_lines(&mut self, rows: usize) {
         trace!("IL: {}", rows);
-        self.insert_line(u16::try_from(rows).unwrap());
+        if !self.scrolling_region.contains(&self.cursor.row) {
+            return;
+        }
+        self.scroll_down_in_region(self.cursor.row, u16::try_from(rows).unwrap());
     }
 
     fn delete_lines(&mut self, rows: usize) {
         trace!("DL: {}", rows);
         let rows = u16::try_from(rows).unwrap();
-        if rows < 1
-            || self.cursor.row < self.scrolling_region.0
-            || self.cursor.row >= self.scrolling_region.1
-        {
+        if !self.scrolling_region.contains(&self.cursor.row) {
             return;
         }
-        for row in self.cursor.row..self.scrolling_region.1 {
-            for col in 0..self.width {
-                *self.cell_at_mut(CursorPos { col, row }) =
-                    if row < self.cursor.row + rows {
-                        *self.cell_at(CursorPos::at(col, row + rows))
-                    } else {
-                        Cell::default()
-                    };
-            }
-        }
+        self.scroll_up_in_region(self.cursor.row, rows);
     }
 
     fn erase_chars(&mut self, cols: usize) {
@@ -468,7 +436,7 @@ impl<W: Write> Handler<W> for Grid<W> {
 
     fn reverse_index(&mut self) {
         trace!("RI");
-        if self.cursor.row == self.scrolling_region.0 {
+        if self.cursor.row == self.scrolling_region.start {
             self.scroll_down(1);
         } else {
             self.cursor.row -= 1;
@@ -494,10 +462,8 @@ impl<W: Write> Handler<W> for Grid<W> {
         debug!("set scroll region: {:?} - {:?}", top, bottom);
 
         let bottom = bottom.unwrap_or(self.height as usize);
-        self.scrolling_region = (
-            u16::try_from(top - 1).unwrap(),
-            min(u16::try_from(bottom).unwrap(), self.height),
-        );
+        self.scrolling_region = u16::try_from(top - 1).unwrap()
+            ..min(u16::try_from(bottom).unwrap(), self.height);
         self.goto(0, 0);
     }
 
