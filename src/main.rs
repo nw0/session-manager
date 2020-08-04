@@ -10,10 +10,9 @@ use log4rs::{
 };
 use nix::pty::Winsize;
 use signal_hook::{iterator::Signals, SIGWINCH};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::thread;
-use termion::get_tty;
-use termion::raw::IntoRawMode;
+use termion::{get_tty, input::TermReadEventsAndRaw, raw::IntoRawMode};
 
 mod console;
 mod grid;
@@ -21,6 +20,7 @@ mod window;
 use window::Window;
 
 fn main() -> Result<()> {
+    // TODO: turn into lib/bin crate
     let logfile = FileAppender::builder()
         // Pattern: https://docs.rs/log4rs/*/log4rs/encode/pattern/index.html
         .build("log")
@@ -38,7 +38,7 @@ fn main() -> Result<()> {
     let signal = Signals::new(&[SIGWINCH])?;
 
     let tty_output = get_tty()?.into_raw_mode()?;
-    let mut tty_input = tty_output.try_clone()?.bytes();
+    let input_events = tty_output.try_clone()?.events_and_raw();
 
     let child = Window::new(&get_shell(), get_term_size()?, tty_output).unwrap();
     let mut pty_output = child.get_file().try_clone()?;
@@ -46,9 +46,12 @@ fn main() -> Result<()> {
     let child_pty = child.console.child_pty;
 
     thread::spawn(move || -> Result<()> {
-        // Handle stdin
-        while let Some(Ok(byte)) = tty_input.next() {
-            pty_output.write(&[byte])?;
+        for event in input_events.inspect(|e| log::debug!("{:?}", e)) {
+            if event.is_err() {
+                break;
+            }
+            let (_, data) = event.unwrap();
+            pty_output.write(&data)?;
             pty_output.flush()?;
         }
         Ok(())

@@ -17,6 +17,13 @@ nix::ioctl_write_ptr_bad!(win_resize, libc::TIOCSWINSZ, nix::pty::Winsize);
 nix::ioctl_none_bad!(set_controlling, libc::TIOCSCTTY);
 
 /// A pty and state.
+///
+/// A `Console` should:
+/// - Maintain a child pty, to connect to the underlying application
+/// - Maintain a buffer (`Grid`) to display the child pty
+/// - Given access to the tty, draw the buffer
+/// - Notify if the child closes its pty
+/// - Be capable of terminating the child
 pub struct Console {
     pub child_pty: ChildPty,
 }
@@ -39,7 +46,9 @@ impl Console {
         let mut grid = Grid::new(size.ws_col, size.ws_row);
 
         thread::spawn(move || {
+            // loop to take care of pty
             while let Some(Ok(byte)) = pty_output.next() {
+                // give Grid `pty_input` in case it needs to reply to the pty
                 parser.advance(&mut grid, byte, &mut pty_input);
                 grid.draw(&mut output_stream);
             }
