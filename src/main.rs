@@ -3,6 +3,7 @@
 //! A would-be terminal multiplexer.
 
 use anyhow::Result;
+use futures::stream::StreamExt;
 use log::LevelFilter;
 use log4rs::{
     append::file::FileAppender,
@@ -10,9 +11,14 @@ use log4rs::{
 };
 use nix::pty::Winsize;
 use signal_hook::{iterator::Signals, SIGWINCH};
+use std::fs::File;
 use std::io::Write;
 use std::thread;
-use termion::{get_tty, input::TermReadEventsAndRaw, raw::IntoRawMode};
+use termion::{
+    get_tty,
+    input::{EventsAndRaw, TermReadEventsAndRaw},
+    raw::IntoRawMode,
+};
 
 mod console;
 mod grid;
@@ -38,24 +44,14 @@ fn main() -> Result<()> {
     let signal = Signals::new(&[SIGWINCH])?;
 
     let tty_output = get_tty()?.into_raw_mode()?;
-    let input_events = tty_output.try_clone()?.events_and_raw();
+    let mut input_events = tty_output.try_clone()?.events_and_raw();
 
     let child = Window::new(&get_shell(), get_term_size()?, tty_output).unwrap();
     let mut pty_output = child.get_file().try_clone()?;
 
     let child_pty = child.console.child_pty;
 
-    thread::spawn(move || -> Result<()> {
-        for event in input_events.inspect(|e| log::debug!("{:?}", e)) {
-            if event.is_err() {
-                break;
-            }
-            let (_, data) = event.unwrap();
-            pty_output.write(&data)?;
-            pty_output.flush()?;
-        }
-        Ok(())
-    });
+    futures::executor::block_on(handle_stdin(&mut input_events, &mut pty_output));
 
     thread::spawn(move || -> Result<()> {
         Ok(for _ in signal.forever() {
@@ -65,6 +61,17 @@ fn main() -> Result<()> {
 
     child.status.recv().unwrap();
     Ok(())
+}
+
+async fn handle_stdin(input_events: &mut EventsAndRaw<File>, pty_output: &mut File) {
+    while let Some(Ok((_, data))) =
+        futures::stream::iter(input_events.inspect(|e| log::debug!("{:?}", e)))
+            .next()
+            .await
+    {
+        pty_output.write(&data).unwrap();
+        pty_output.flush().unwrap();
+    }
 }
 
 pub fn get_term_size() -> Result<Winsize> {

@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 anyhow = "1"
+futures = "0.3"
 libc = "0.2"
 log = "*"
 log4rs = { version = "*", default-features = false, features = ["file_appender"] }
