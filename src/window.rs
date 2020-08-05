@@ -2,8 +2,6 @@
 use anyhow::Result;
 use nix::pty::Winsize;
 use std::fs::File;
-use std::sync::mpsc::Receiver;
-use termion::raw::RawTerminal;
 
 use crate::console::Console;
 
@@ -14,17 +12,12 @@ use crate::console::Console;
 /// interface between the multiplexer and the `Console`.
 pub struct Window {
     pub console: Console,
-    pub status: Receiver<bool>,
 }
 
 impl Window {
-    pub fn new(
-        command: &str,
-        size: Winsize,
-        output_stream: RawTerminal<File>,
-    ) -> Result<Window, ()> {
-        let (console, status) = Console::new(command, size, output_stream)?;
-        Ok(Window { console, status })
+    pub fn new(command: &str, size: Winsize) -> Result<Window, ()> {
+        let console = Console::new(command, size)?;
+        Ok(Window { console })
     }
 
     pub fn get_file(&self) -> &File {

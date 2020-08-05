@@ -2,14 +2,9 @@
 use nix::pty::{openpty, Winsize};
 use nix::unistd::setsid;
 use std::fs::File;
-use std::io::Read;
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
-use std::sync::mpsc::{channel, Receiver};
-use std::thread;
-use termion::raw::RawTerminal;
-use vte::ansi::Processor;
 
 use crate::grid::Grid;
 
@@ -26,6 +21,7 @@ nix::ioctl_none_bad!(set_controlling, libc::TIOCSCTTY);
 /// - Be capable of terminating the child
 pub struct Console {
     pub child_pty: ChildPty,
+    pub grid: Grid<File>,
 }
 
 impl Console {
@@ -33,29 +29,10 @@ impl Console {
     ///
     /// The returned `Receiver` signals when the process running in the child
     /// pty has terminated.
-    pub fn new(
-        command: &str,
-        size: Winsize,
-        mut output_stream: RawTerminal<File>,
-    ) -> Result<(Console, Receiver<bool>), ()> {
-        let (sender, status) = channel();
+    pub fn new(command: &str, size: Winsize) -> Result<Console, ()> {
         let child_pty = ChildPty::new(command, size)?;
-        let mut pty_output = child_pty.file.try_clone().unwrap().bytes();
-        let mut pty_input = child_pty.file.try_clone().unwrap();
-        let mut parser = Processor::new();
-        let mut grid = Grid::new(size.ws_col, size.ws_row);
-
-        thread::spawn(move || {
-            // loop to take care of pty
-            while let Some(Ok(byte)) = pty_output.next() {
-                // give Grid `pty_input` in case it needs to reply to the pty
-                parser.advance(&mut grid, byte, &mut pty_input);
-                grid.draw(&mut output_stream);
-            }
-            sender.send(true).unwrap();
-        });
-
-        Ok((Console { child_pty }, status))
+        let grid = Grid::new(size.ws_col, size.ws_row);
+        Ok(Console { child_pty, grid })
     }
 }
 
