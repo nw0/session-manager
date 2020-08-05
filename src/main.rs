@@ -2,8 +2,17 @@
 //!
 //! A would-be terminal multiplexer.
 
+use std::{
+    fs::File,
+    io::{Read, Write},
+    thread,
+};
+
 use anyhow::Result;
-use futures::stream::StreamExt;
+use futures::{
+    executor,
+    stream::{self, StreamExt},
+};
 use log::LevelFilter;
 use log4rs::{
     append::file::FileAppender,
@@ -11,11 +20,8 @@ use log4rs::{
 };
 use nix::pty::Winsize;
 use signal_hook::{iterator::Signals, SIGWINCH};
-use std::fs::File;
-use std::io::{Read, Write};
-use std::thread;
 use termion::{
-    get_tty,
+    self,
     input::{EventsAndRaw, TermReadEventsAndRaw},
     raw::IntoRawMode,
 };
@@ -46,7 +52,7 @@ fn main() -> Result<()> {
 
     let signal = Signals::new(&[SIGWINCH])?;
 
-    let mut tty_output = get_tty()?.into_raw_mode()?;
+    let mut tty_output = termion::get_tty()?.into_raw_mode()?;
     let mut input_events = tty_output.try_clone()?.events_and_raw();
 
     let child = Window::new(&get_shell(), get_term_size()?).unwrap();
@@ -70,7 +76,7 @@ fn main() -> Result<()> {
 
     let child_pty = child_pty;
 
-    futures::executor::block_on(handle_stdin(&mut input_events, &mut pty_for_stdin));
+    executor::block_on(handle_stdin(&mut input_events, &mut pty_for_stdin));
 
     thread::spawn(move || -> Result<()> {
         Ok(for _ in signal.forever() {
@@ -83,7 +89,7 @@ fn main() -> Result<()> {
 
 async fn handle_stdin(input_events: &mut EventsAndRaw<File>, pty_output: &mut File) {
     while let Some(Ok((_, data))) =
-        futures::stream::iter(input_events.inspect(|e| log::debug!("{:?}", e)))
+        stream::iter(input_events.inspect(|e| log::debug!("{:?}", e)))
             .next()
             .await
     {

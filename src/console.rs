@@ -1,10 +1,16 @@
 //! Structures to manage a pseudoterminal.
-use nix::pty::{openpty, Winsize};
-use nix::unistd::setsid;
-use std::fs::File;
-use std::os::unix::io::{FromRawFd, RawFd};
-use std::os::unix::process::CommandExt;
-use std::process::{Command, Stdio};
+
+use std::{
+    fs::File,
+    os::unix::io::{FromRawFd, RawFd},
+    os::unix::process::CommandExt,
+    process::{Command, Stdio},
+};
+
+use nix::{
+    pty::{openpty, Winsize},
+    unistd::setsid,
+};
 
 use crate::grid::Grid;
 

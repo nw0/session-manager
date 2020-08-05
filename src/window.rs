@@ -1,7 +1,9 @@
 //! Structures and functions to manage windows.
+
+use std::fs::File;
+
 use anyhow::Result;
 use nix::pty::Winsize;
-use std::fs::File;
 
 use crate::console::Console;
 

@@ -1,11 +1,15 @@
 //! Console buffer implementation.
+
+use std::{
+    cmp::{max, min},
+    convert::{TryFrom, TryInto},
+    fs::File,
+    io::Write,
+    marker::PhantomData,
+    ops::Range,
+};
+
 use log::{debug, info, trace, warn};
-use std::cmp::{max, min};
-use std::convert::{TryFrom, TryInto};
-use std::fs::File;
-use std::io::Write;
-use std::marker::PhantomData;
-use std::ops::Range;
 use termion::raw::RawTerminal;
 use vte::ansi::{
     Attr, CharsetIndex, ClearMode, CursorStyle, Handler, LineClearMode, Mode, Rgb,
