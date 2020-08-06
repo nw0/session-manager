@@ -2,11 +2,7 @@
 //!
 //! A would-be terminal multiplexer.
 
-use std::{
-    fs::File,
-    io::{Read, Write},
-    thread,
-};
+use std::{fs::File, io::Write, thread};
 
 use anyhow::Result;
 use futures::{
@@ -14,7 +10,7 @@ use futures::{
     executor,
     stream::StreamExt,
 };
-use log::LevelFilter;
+use log::{info, LevelFilter};
 use log4rs::{
     append::file::FileAppender,
     config::{Appender, Config, Root},
@@ -25,7 +21,7 @@ use termion::{
     self,
     event::Event,
     input::{EventsAndRaw, TermReadEventsAndRaw},
-    raw::IntoRawMode,
+    raw::{IntoRawMode, RawTerminal},
 };
 use vte::ansi::Processor;
 
@@ -34,6 +30,7 @@ mod grid;
 mod window;
 
 use console::Console;
+use grid::Grid;
 use window::Window;
 
 fn main() -> Result<()> {
@@ -58,28 +55,22 @@ fn main() -> Result<()> {
     let input_events = tty_output.try_clone()?.events_and_raw();
     let mut input_stream = input_to_stream(input_events);
 
-    let child = Window::new(&get_shell(), get_term_size()?).unwrap();
-    let mut pty_output = child.get_file().try_clone()?.bytes();
-    let mut pty_input = child.get_file().try_clone()?;
+    let (child, mut pty_update) = Window::new(&get_shell(), get_term_size()?).unwrap();
     let mut pty_for_stdin = child.get_file().try_clone()?;
-    let mut parser = Processor::new();
     let Console {
         child_pty,
         mut grid,
     } = child.console;
 
-    thread::spawn(move || {
-        // loop to take care of pty
-        while let Some(Ok(byte)) = pty_output.next() {
-            // give Grid `pty_input` in case it needs to reply to the pty
-            parser.advance(&mut grid, byte, &mut pty_input);
-            grid.draw(&mut tty_output);
-        }
-    });
-
     let child_pty = child_pty;
 
-    executor::block_on(event_loop(&mut input_stream, &mut pty_for_stdin));
+    executor::block_on(event_loop(
+        &mut input_stream,
+        &mut pty_for_stdin,
+        &mut pty_update,
+        &mut grid,
+        &mut tty_output,
+    ));
 
     thread::spawn(move || -> Result<()> {
         Ok(for _ in signal.forever() {
@@ -104,10 +95,32 @@ fn input_to_stream(mut input_events: EventsAndRaw<File>) -> Receiver<(Event, Vec
 async fn event_loop(
     input_events: &mut Receiver<(Event, Vec<u8>)>,
     pty_output: &mut File,
+    pty_update: &mut Receiver<u8>,
+    grid: &mut Grid<File>,
+    tty_output: &mut RawTerminal<File>,
 ) {
-    while let Some((_, data)) = input_events.next().await {
-        pty_output.write(&data).unwrap();
-        pty_output.flush().unwrap();
+    let mut parser = Processor::new();
+    let mut pty_input = pty_output.try_clone().unwrap();
+    loop {
+        futures::select! {
+            input = input_events.next() => {
+                match input {
+                    Some((_, data)) => {
+                        pty_output.write(&data).unwrap();
+                        pty_output.flush().unwrap();
+                    },
+                    None => unreachable!(),
+                }
+            }
+            byte = pty_update.next() => {
+                if byte.is_none() {
+                    info!("pty exit");
+                    return;
+                }
+                parser.advance(grid, byte.unwrap(), &mut pty_input);
+                grid.draw(tty_output);
+            }
+        }
     }
 }
 

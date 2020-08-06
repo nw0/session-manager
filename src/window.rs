@@ -3,6 +3,7 @@
 use std::fs::File;
 
 use anyhow::Result;
+use futures::channel::mpsc::Receiver;
 use nix::pty::Winsize;
 
 use crate::console::Console;
@@ -17,9 +18,9 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn new(command: &str, size: Winsize) -> Result<Window, ()> {
-        let console = Console::new(command, size)?;
-        Ok(Window { console })
+    pub fn new(command: &str, size: Winsize) -> Result<(Window, Receiver<u8>), ()> {
+        let (console, pty_update) = Console::new(command, size)?;
+        Ok((Window { console }, pty_update))
     }
 
     pub fn get_file(&self) -> &File {

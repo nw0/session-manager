@@ -2,11 +2,14 @@
 
 use std::{
     fs::File,
+    io::Read,
     os::unix::io::{FromRawFd, RawFd},
     os::unix::process::CommandExt,
     process::{Command, Stdio},
+    thread,
 };
 
+use futures::channel::mpsc::{self, Receiver};
 use nix::{
     pty::{openpty, Winsize},
     unistd::setsid,
@@ -35,10 +38,18 @@ impl Console {
     ///
     /// The returned `Receiver` signals when the process running in the child
     /// pty has terminated.
-    pub fn new(command: &str, size: Winsize) -> Result<Console, ()> {
+    pub fn new(command: &str, size: Winsize) -> Result<(Console, Receiver<u8>), ()> {
         let child_pty = ChildPty::new(command, size)?;
+        let mut pty_output = child_pty.file.try_clone().unwrap().bytes();
+        let (mut send, pty_update) = mpsc::channel(0x1000);
+        thread::spawn(move || {
+            while let Some(Ok(byte)) = pty_output.next() {
+                send.try_send(byte).unwrap();
+            }
+            send.disconnect();
+        });
         let grid = Grid::new(size.ws_col, size.ws_row);
-        Ok(Console { child_pty, grid })
+        Ok((Console { child_pty, grid }, pty_update))
     }
 }
 
