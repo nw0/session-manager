@@ -10,8 +10,9 @@ use std::{
 
 use anyhow::Result;
 use futures::{
+    channel::mpsc::{self, Receiver},
     executor,
-    stream::{self, StreamExt},
+    stream::StreamExt,
 };
 use log::LevelFilter;
 use log4rs::{
@@ -22,6 +23,7 @@ use nix::pty::Winsize;
 use signal_hook::{iterator::Signals, SIGWINCH};
 use termion::{
     self,
+    event::Event,
     input::{EventsAndRaw, TermReadEventsAndRaw},
     raw::IntoRawMode,
 };
@@ -53,7 +55,8 @@ fn main() -> Result<()> {
     let signal = Signals::new(&[SIGWINCH])?;
 
     let mut tty_output = termion::get_tty()?.into_raw_mode()?;
-    let mut input_events = tty_output.try_clone()?.events_and_raw();
+    let input_events = tty_output.try_clone()?.events_and_raw();
+    let mut input_stream = input_to_stream(input_events);
 
     let child = Window::new(&get_shell(), get_term_size()?).unwrap();
     let mut pty_output = child.get_file().try_clone()?.bytes();
@@ -76,7 +79,7 @@ fn main() -> Result<()> {
 
     let child_pty = child_pty;
 
-    executor::block_on(handle_stdin(&mut input_events, &mut pty_for_stdin));
+    executor::block_on(event_loop(&mut input_stream, &mut pty_for_stdin));
 
     thread::spawn(move || -> Result<()> {
         Ok(for _ in signal.forever() {
@@ -87,12 +90,22 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-async fn handle_stdin(input_events: &mut EventsAndRaw<File>, pty_output: &mut File) {
-    while let Some(Ok((_, data))) =
-        stream::iter(input_events.inspect(|e| log::debug!("{:?}", e)))
-            .next()
-            .await
-    {
+fn input_to_stream(mut input_events: EventsAndRaw<File>) -> Receiver<(Event, Vec<u8>)> {
+    let (mut send, recv) = mpsc::channel(0x1000);
+    thread::spawn(move || {
+        while let Some(Ok((e, d))) = input_events.next() {
+            send.try_send((e, d)).unwrap();
+        }
+        send.disconnect();
+    });
+    recv
+}
+
+async fn event_loop(
+    input_events: &mut Receiver<(Event, Vec<u8>)>,
+    pty_output: &mut File,
+) {
+    while let Some((_, data)) = input_events.next().await {
         pty_output.write(&data).unwrap();
         pty_output.flush().unwrap();
     }
