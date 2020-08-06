@@ -17,49 +17,38 @@ use nix::{
 
 use crate::grid::Grid;
 
-nix::ioctl_write_ptr_bad!(win_resize, libc::TIOCSWINSZ, nix::pty::Winsize);
-nix::ioctl_none_bad!(set_controlling, libc::TIOCSCTTY);
-
-/// A pty and state.
-///
-/// A `Console` should:
-/// - Maintain a child pty, to connect to the underlying application
-/// - Maintain a buffer (`Grid`) to display the child pty
-/// - Given access to the tty, draw the buffer
-/// - Notify if the child closes its pty
-/// - Be capable of terminating the child
-pub struct Console {
-    pub child_pty: ChildPty,
-    pub grid: Grid<File>,
+mod ioctl {
+    nix::ioctl_none_bad!(set_controlling, libc::TIOCSCTTY);
+    nix::ioctl_write_ptr_bad!(win_resize, libc::TIOCSWINSZ, nix::pty::Winsize);
 }
 
-impl Console {
-    /// Initialise a new console.
-    ///
-    /// The returned `Receiver` signals when the process running in the child
-    /// pty has terminated.
-    pub fn new(command: &str, size: Winsize) -> Result<(Console, Receiver<u8>), ()> {
-        let child_pty = ChildPty::new(command, size)?;
-        let mut pty_output = child_pty.file.try_clone().unwrap().bytes();
-        let (mut send, pty_update) = mpsc::channel(0x1000);
-        thread::spawn(move || {
-            while let Some(Ok(byte)) = pty_output.next() {
-                send.try_send(byte).unwrap();
-            }
-            send.disconnect();
-        });
-        let grid = Grid::new(size.ws_col, size.ws_row);
-        Ok((Console { child_pty, grid }, pty_update))
-    }
+/// Initialise a new process and grid.
+pub fn spawn_pty(
+    command: &str,
+    size: Winsize,
+) -> Result<(ChildPty, Grid<File>, Receiver<u8>), ()> {
+    let child_pty = ChildPty::new(command, size)?;
+    let mut pty_output = child_pty.file.try_clone().unwrap().bytes();
+    let (mut send, pty_update) = mpsc::channel(0x1000);
+    thread::spawn(move || {
+        while let Some(Ok(byte)) = pty_output.next() {
+            send.try_send(byte).unwrap();
+        }
+        send.disconnect();
+    });
+    let grid = Grid::new(size.ws_col, size.ws_row);
+    Ok((child_pty, grid, pty_update))
 }
 
-/// A pty.
+/// A pseudoterminal.
 pub struct ChildPty {
     fd: RawFd,
+    /// The File used by this PTY.
     pub file: File,
 }
 
 impl ChildPty {
+    /// Spawn a process in a new pty.
     pub fn new(shell: &str, size: Winsize) -> Result<ChildPty, ()> {
         let pty = openpty(&size, None).unwrap();
         unsafe {
@@ -69,7 +58,7 @@ impl ChildPty {
                 .stderr(Stdio::from_raw_fd(pty.slave))
                 .pre_exec(|| {
                     setsid().unwrap();
-                    set_controlling(0).unwrap();
+                    ioctl::set_controlling(0).unwrap();
                     Ok(())
                 })
                 .spawn()
@@ -87,8 +76,9 @@ impl ChildPty {
         }
     }
 
+    /// Send a resize to the process running in this PTY.
     pub fn resize(&self, size: Winsize) -> Result<(), ()> {
-        unsafe { win_resize(self.fd, &size) }
+        unsafe { ioctl::win_resize(self.fd, &size) }
             .map(|_| ())
             .map_err(|_| ())
     }

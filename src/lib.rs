@@ -1,5 +1,5 @@
 //! Abstractions used by the session manager.
-
+#[warn(missing_docs)]
 pub mod console;
 pub mod grid;
 pub mod window;

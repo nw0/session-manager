@@ -6,7 +6,8 @@ use anyhow::Result;
 use futures::channel::mpsc::Receiver;
 use nix::pty::Winsize;
 
-use crate::console::Console;
+use crate::console::{self, ChildPty};
+use crate::grid::Grid;
 
 /// Window: a `Console` abstraction.
 ///
@@ -14,16 +15,17 @@ use crate::console::Console;
 /// underlying terminal implementation and frame, whereas `Window` acts as the
 /// interface between the multiplexer and the `Console`.
 pub struct Window {
-    pub console: Console,
+    pub pty: ChildPty,
+    pub grid: Grid<File>,
 }
 
 impl Window {
     pub fn new(command: &str, size: Winsize) -> Result<(Window, Receiver<u8>), ()> {
-        let (console, pty_update) = Console::new(command, size)?;
-        Ok((Window { console }, pty_update))
+        let (pty, grid, pty_update) = console::spawn_pty(command, size)?;
+        Ok((Window { pty, grid }, pty_update))
     }
 
     pub fn get_file(&self) -> &File {
-        &self.console.child_pty.file
+        &self.pty.file
     }
 }

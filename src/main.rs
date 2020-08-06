@@ -25,7 +25,6 @@ use termion::{
 use vte::ansi::Processor;
 
 use session_manager::{
-    console::Console,
     grid::Grid,
     util::{get_shell, get_term_size},
     window::Window,
@@ -54,12 +53,7 @@ fn main() -> Result<()> {
 
     let (child, mut pty_update) = Window::new(&get_shell(), get_term_size()?).unwrap();
     let mut pty_for_stdin = child.get_file().try_clone()?;
-    let Console {
-        child_pty,
-        mut grid,
-    } = child.console;
-
-    let child_pty = child_pty;
+    let Window { pty, mut grid } = child;
 
     executor::block_on(event_loop(
         &mut input_stream,
@@ -71,7 +65,7 @@ fn main() -> Result<()> {
 
     thread::spawn(move || -> Result<()> {
         Ok(for _ in signal.forever() {
-            child_pty.resize(get_term_size()?).unwrap();
+            pty.resize(get_term_size()?).unwrap();
         })
     });
 
