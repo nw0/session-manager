@@ -2,7 +2,7 @@
 #[warn(missing_docs)]
 pub mod console;
 pub mod grid;
-pub mod window;
+pub mod session;
 
 pub mod util {
     use std::io;
