@@ -15,7 +15,6 @@ use log4rs::{
     append::file::FileAppender,
     config::{Appender, Config, Root},
 };
-use nix::pty::Winsize;
 use signal_hook::{iterator::Signals, SIGWINCH};
 use termion::{
     self,
@@ -25,16 +24,14 @@ use termion::{
 };
 use vte::ansi::Processor;
 
-mod console;
-mod grid;
-mod window;
-
-use console::Console;
-use grid::Grid;
-use window::Window;
+use session_manager::{
+    console::Console,
+    grid::Grid,
+    util::{get_shell, get_term_size},
+    window::Window,
+};
 
 fn main() -> Result<()> {
-    // TODO: turn into lib/bin crate
     let logfile = FileAppender::builder()
         // Pattern: https://docs.rs/log4rs/*/log4rs/encode/pattern/index.html
         .build("log")
@@ -122,20 +119,4 @@ async fn event_loop(
             }
         }
     }
-}
-
-pub fn get_term_size() -> Result<Winsize> {
-    let (cols, rows) = termion::terminal_size()?;
-    Ok(Winsize {
-        ws_row: rows,
-        ws_col: cols,
-        ws_xpixel: 0,
-        ws_ypixel: 0,
-    })
-}
-
-/// Return the path to the shell executable.
-pub fn get_shell() -> String {
-    // TODO: something reasonable
-    "/bin/sh".to_string()
 }
