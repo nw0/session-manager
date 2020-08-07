@@ -15,7 +15,7 @@ use termion::raw::RawTerminal;
 use vte::ansi::Processor;
 
 use crate::{
-    console::{self, ChildPty},
+    console::{self, ChildPty, PtyUpdate},
     grid::Grid,
     util,
 };
@@ -47,7 +47,7 @@ impl Session {
         self.processors.push(Processor::new());
         let window_idx = self.next_window;
         self.next_window += 1;
-        Ok(update.map(move |byte| SessionPtyUpdate { window_idx, byte }))
+        Ok(update.map(move |data| SessionPtyUpdate { window_idx, data }))
     }
 
     fn selected_window(&self) -> Option<&Window> {
@@ -78,14 +78,19 @@ impl Session {
         update: SessionPtyUpdate,
         tty_output: &mut RawTerminal<File>,
     ) {
-        let window = self.windows.get_mut(update.window_idx).unwrap();
-        let mut reply = window.get_file().try_clone().unwrap();
-        self.processors.get_mut(update.window_idx).unwrap().advance(
-            &mut window.grid,
-            update.byte,
-            &mut reply,
-        );
-        window.grid.draw(tty_output);
+        match update.data {
+            PtyUpdate::Exited => (),
+            PtyUpdate::Byte(byte) => {
+                let window = self.windows.get_mut(update.window_idx).unwrap();
+                let mut reply = window.get_file().try_clone().unwrap();
+                self.processors.get_mut(update.window_idx).unwrap().advance(
+                    &mut window.grid,
+                    byte,
+                    &mut reply,
+                );
+                window.grid.draw(tty_output);
+            }
+        }
     }
 
     pub fn resize_pty(&self, idx: usize) {
@@ -97,7 +102,7 @@ impl Session {
 /// Session-specific PTY update tuple.
 pub struct SessionPtyUpdate {
     window_idx: usize,
-    byte: u8,
+    data: PtyUpdate,
 }
 
 /// Window: a `Console` abstraction.
@@ -111,7 +116,10 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn new(command: &str, size: Winsize) -> Result<(Window, Receiver<u8>), ()> {
+    pub fn new(
+        command: &str,
+        size: Winsize,
+    ) -> Result<(Window, Receiver<PtyUpdate>), ()> {
         let (pty, grid, pty_update) = console::spawn_pty(command, size)?;
         Ok((Window { pty, grid }, pty_update))
     }

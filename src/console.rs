@@ -26,18 +26,27 @@ mod ioctl {
 pub fn spawn_pty(
     command: &str,
     size: Winsize,
-) -> Result<(ChildPty, Grid<File>, Receiver<u8>), ()> {
+) -> Result<(ChildPty, Grid<File>, Receiver<PtyUpdate>), ()> {
     let child_pty = ChildPty::new(command, size)?;
     let mut pty_output = child_pty.file.try_clone().unwrap().bytes();
     let (mut send, pty_update) = mpsc::channel(0x1000);
     thread::spawn(move || {
         while let Some(Ok(byte)) = pty_output.next() {
-            send.try_send(byte).unwrap();
+            send.try_send(PtyUpdate::Byte(byte)).unwrap();
         }
+        send.try_send(PtyUpdate::Exited).unwrap();
         send.disconnect();
     });
     let grid = Grid::new(size.ws_col, size.ws_row);
     Ok((child_pty, grid, pty_update))
+}
+
+/// An update from a PTY.
+pub enum PtyUpdate {
+    /// The PTY has closed the file.
+    Exited,
+    /// PTY sends byte.
+    Byte(u8),
 }
 
 /// A pseudoterminal.
