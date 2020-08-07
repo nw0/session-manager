@@ -2,6 +2,7 @@
 
 use std::{
     cmp::{max, min},
+    collections::BTreeSet,
     convert::{TryFrom, TryInto},
     fs::File,
     io::Write,
@@ -10,7 +11,7 @@ use std::{
 };
 
 use log::{debug, info, trace, warn};
-use termion::raw::RawTerminal;
+use termion::{cursor::Goto, raw::RawTerminal};
 use vte::ansi::{
     Attr, CharsetIndex, ClearMode, CursorStyle, Handler, LineClearMode, Mode, Rgb,
     StandardCharset, TabulationClearMode,
@@ -39,6 +40,12 @@ impl CursorPos {
     }
 }
 
+impl From<CursorPos> for Goto {
+    fn from(p: CursorPos) -> Goto {
+        Goto(1 + p.col, 1 + p.row)
+    }
+}
+
 /// The display buffer of a console.
 pub struct Grid<W> {
     cursor: CursorPos,
@@ -47,6 +54,7 @@ pub struct Grid<W> {
     width: u16,
     height: u16,
     buffer: Vec<Cell>,
+    dirty_rows: BTreeSet<u16>,
     _phantom: PhantomData<W>,
 }
 
@@ -54,10 +62,8 @@ impl<W: Write> Grid<W> {
     /// Initialise an empty display buffer.
     pub fn new(width: u16, height: u16) -> Grid<W> {
         let sz = width * height;
-        let mut buffer = Vec::with_capacity(sz as usize);
-        for _ in 0..sz {
-            buffer.push(Cell::default());
-        }
+        let buffer = vec![Cell::default(); sz as usize];
+        let dirty_rows = (0..height).collect();
         Grid {
             cursor: Default::default(),
             saved_cursor: Default::default(),
@@ -65,20 +71,34 @@ impl<W: Write> Grid<W> {
             width,
             height,
             buffer,
+            dirty_rows,
             _phantom: Default::default(),
         }
     }
 
+    /// Mark all rows as dirty.
+    pub fn mark_all_dirty(&mut self) {
+        self.dirty_rows.extend(0..self.height);
+    }
+
     /// Draw this buffer to `term`.
-    pub fn draw(&self, term: &mut RawTerminal<File>) {
-        write!(
-            term,
-            "{}{}{}",
-            termion::cursor::Goto(1, 1),
-            self.buffer.iter().map(|c| c.c).collect::<String>(),
-            termion::cursor::Goto(1 + self.cursor.col, 1 + self.cursor.row)
-        )
-        .unwrap();
+    pub fn draw(&mut self, term: &mut RawTerminal<File>) {
+        for row in self.dirty_rows.iter() {
+            let start = CursorPos { row: *row, col: 0 };
+            let end = CursorPos::at(self.width - 1, *row);
+            write!(
+                term,
+                "{}{}",
+                Goto::from(start),
+                self.buffer[self.buffer_idx(start)..self.buffer_idx(end)]
+                    .iter()
+                    .map(|c| c.c)
+                    .collect::<String>()
+            )
+            .unwrap();
+        }
+        write!(term, "{}", Goto::from(self.cursor)).unwrap();
+        self.dirty_rows.clear();
     }
 
     fn buffer_idx(&self, pos: CursorPos) -> usize {
@@ -92,6 +112,7 @@ impl<W: Write> Grid<W> {
 
     fn cell_at_mut(&mut self, pos: CursorPos) -> &mut Cell {
         let idx = self.buffer_idx(pos);
+        self.dirty_rows.insert(pos.row);
         &mut self.buffer[idx]
     }
 
@@ -414,6 +435,7 @@ impl<W: Write> Handler<W> for Grid<W> {
                 })
             }
         };
+        self.dirty_rows.insert(self.cursor.row);
         self.buffer[range]
             .iter_mut()
             .for_each(|i| *i = Cell::default());
@@ -425,6 +447,8 @@ impl<W: Write> Handler<W> for Grid<W> {
             ClearMode::Above => 0..self.buffer_idx(self.cursor),
             ClearMode::Below => self.buffer_idx(self.cursor)..self.buffer.len(),
         };
+        // TODO: only mark cleared rows
+        self.dirty_rows.extend(0..self.height);
         self.buffer[range]
             .iter_mut()
             .for_each(|i| *i = Cell::default());

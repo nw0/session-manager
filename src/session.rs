@@ -61,10 +61,15 @@ impl Session {
         self.windows.get(&self.selected_window.unwrap())
     }
 
+    fn selected_window_mut(&mut self) -> Option<&mut Window> {
+        self.windows.get_mut(&self.selected_window.unwrap())
+    }
+
     pub fn select_window(&mut self, idx: usize) -> Option<usize> {
         match self.windows.get(&idx) {
             Some(_) => {
                 self.selected_window = Some(idx);
+                self.selected_window_mut().unwrap().grid.mark_all_dirty();
                 Some(idx)
             }
             None => None,
@@ -106,8 +111,8 @@ impl Session {
     }
 
     /// Draw the selected `Window` to the given terminal.
-    pub fn redraw(&self, tty_output: &mut RawTerminal<File>) {
-        self.selected_window().unwrap().grid.draw(tty_output);
+    pub fn redraw(&mut self, tty_output: &mut RawTerminal<File>) {
+        self.selected_window_mut().unwrap().grid.draw(tty_output);
     }
 
     /// Update grid with PTY output.
