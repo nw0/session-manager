@@ -3,7 +3,10 @@
 use std::{fs::File, io::Write};
 
 use anyhow::Result;
-use futures::channel::mpsc::Receiver;
+use futures::{
+    channel::mpsc::Receiver,
+    stream::{Stream, StreamExt},
+};
 use nix::pty::Winsize;
 use termion::raw::RawTerminal;
 use vte::ansi::Processor;
@@ -32,13 +35,14 @@ impl Session {
     }
 
     /// Initialise a new window within this `Session`.
-    pub fn new_window(&mut self) -> Result<Receiver<u8>> {
+    pub fn new_window(&mut self) -> Result<impl Stream<Item = SessionPtyUpdate>> {
         let (child, update) =
             Window::new(&util::get_shell(), util::get_term_size()?).unwrap();
         self.windows.push(child);
         self.processors.push(Processor::new());
+        let window_idx = self.next_window;
         self.next_window += 1;
-        Ok(update)
+        Ok(update.map(move |byte| SessionPtyUpdate { window_idx, byte }))
     }
 
     /// Send stdin to this `Window`.
@@ -49,36 +53,32 @@ impl Session {
         Ok(())
     }
 
-    /// Get a `Window` by index.
-    pub fn get_window(&self, idx: usize) -> Option<&Window> {
-        self.windows.get(idx)
-    }
-
     /// Update grid with PTY output.
-    pub fn pty_to_grid(
+    pub fn pty_update(
         &mut self,
-        idx: usize,
-        byte: u8,
-        input: &mut File,
+        update: SessionPtyUpdate,
         tty_output: &mut RawTerminal<File>,
     ) {
-        let window = self.windows.get_mut(idx).unwrap();
-        self.processors
-            .get_mut(idx)
-            .unwrap()
-            .advance(&mut window.grid, byte, input);
+        let window = self.windows.get_mut(update.window_idx).unwrap();
+        let mut reply = window.get_file().try_clone().unwrap();
+        self.processors.get_mut(update.window_idx).unwrap().advance(
+            &mut window.grid,
+            update.byte,
+            &mut reply,
+        );
         window.grid.draw(tty_output);
-    }
-
-    /// Get a `Window` by index.
-    pub fn get_window_mut(&mut self, idx: usize) -> Option<&mut Window> {
-        self.windows.get_mut(idx)
     }
 
     pub fn resize_pty(&self, idx: usize) {
         let sz = util::get_term_size().unwrap();
         self.windows.get(idx).unwrap().pty.resize(sz).unwrap();
     }
+}
+
+/// Session-specific PTY update tuple.
+pub struct SessionPtyUpdate {
+    window_idx: usize,
+    byte: u8,
 }
 
 /// Window: a `Console` abstraction.

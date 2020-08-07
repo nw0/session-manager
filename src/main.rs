@@ -8,7 +8,7 @@ use anyhow::Result;
 use futures::{
     channel::mpsc::{self, Receiver},
     executor,
-    stream::StreamExt,
+    stream::{SelectAll, StreamExt},
 };
 use log::{info, LevelFilter};
 use log4rs::{
@@ -79,14 +79,8 @@ async fn event_loop(
     tty_output: &mut RawTerminal<File>,
     mut session: Session,
 ) {
-    let mut pty_update = session.new_window().unwrap();
-    let pty_for_stdin = session
-        .get_window(0)
-        .unwrap()
-        .get_file()
-        .try_clone()
-        .unwrap();
-    let mut pty_input = pty_for_stdin.try_clone().unwrap();
+    let mut ptys_update = SelectAll::new();
+    ptys_update.push(session.new_window().unwrap());
     let mut sigwinch_stream = sigwinch_stream();
     loop {
         futures::select! {
@@ -98,12 +92,12 @@ async fn event_loop(
                     None => unreachable!(),
                 }
             }
-            byte = pty_update.next() => {
-                if byte.is_none() {
-                    info!("pty exit");
+            pty_update = ptys_update.next() => {
+                if pty_update.is_none() {
+                    info!("last pty exited");
                     return;
                 }
-                session.pty_to_grid(0, byte.unwrap(), &mut pty_input, tty_output);
+                session.pty_update(pty_update.unwrap(), tty_output);
             }
             _ = sigwinch_stream.next() => {
                 session.resize_pty(0);
