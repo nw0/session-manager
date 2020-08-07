@@ -1,7 +1,7 @@
 //! Session manager
 //!
 //! A would-be terminal multiplexer.
-#![recursion_limit = "256"]
+#![recursion_limit = "1024"]
 
 use std::{fs::File, thread};
 
@@ -83,8 +83,9 @@ async fn event_loop(
     mut session: Session,
 ) {
     let mut ptys_update = SelectAll::new();
-    ptys_update.push(session.new_window().unwrap());
-    session.select_window(0);
+    let (idx, window) = session.new_window().unwrap();
+    ptys_update.push(window);
+    session.select_window(idx);
     let mut sigwinch_stream = sigwinch_stream();
     let mut manage_mode = false;
 
@@ -97,16 +98,22 @@ async fn event_loop(
                             session.receive_stdin(&data).unwrap();
                         },
                         Some((Event::Key(Key::Char('c')), _)) => {
-                            ptys_update.push(session.new_window().unwrap());
+                            let (idx, window) = session.new_window().unwrap();
+                            ptys_update.push(window);
+                            session.select_window(idx);
                         },
-                        Some((Event::Key(Key::Char('0')), _)) => {
-                            session.select_window(0);
+                        Some((Event::Key(Key::Char('n')), _)) => {
+                            session.next_window_idx()
+                                .or(session.first_window_idx())
+                                .map(|idx| session.select_window(idx));
                         },
-                        Some((Event::Key(Key::Char('1')), _)) => {
-                            session.select_window(1);
+                        Some((Event::Key(Key::Char('p')), _)) => {
+                            session.prev_window_idx()
+                                .or(session.last_window_idx())
+                                .map(|idx| session.select_window(idx));
                         },
                         None => unreachable!(),
-                        _ => info!("unhandled event: {:?}", input)
+                        _ => info!("unhandled event: {:?}", input),
                     }
                     manage_mode = false;
                     session.redraw(tty_output);

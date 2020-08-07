@@ -1,6 +1,7 @@
 //! Structures and functions to manage windows.
 
 use std::{
+    collections::BTreeMap,
     fs::File,
     io::{self, Write},
 };
@@ -10,6 +11,7 @@ use futures::{
     channel::mpsc::Receiver,
     stream::{Stream, StreamExt},
 };
+use log::debug;
 use nix::pty::Winsize;
 use termion::raw::RawTerminal;
 use vte::ansi::Processor;
@@ -24,7 +26,7 @@ use crate::{
 pub struct Session {
     next_window: usize,
     selected_window: Option<usize>,
-    windows: Vec<Window>,
+    windows: BTreeMap<usize, Window>,
     processors: Vec<Processor>,
 }
 
@@ -34,34 +36,65 @@ impl Session {
         Session {
             next_window: 0,
             selected_window: None,
-            windows: Vec::new(),
+            windows: BTreeMap::new(),
             processors: Vec::new(),
         }
     }
 
     /// Initialise a new window within this `Session`.
-    pub fn new_window(&mut self) -> Result<impl Stream<Item = SessionPtyUpdate>> {
+    pub fn new_window(
+        &mut self,
+    ) -> Result<(usize, impl Stream<Item = SessionPtyUpdate>)> {
+        let window_idx = self.next_window;
         let (child, update) =
             Window::new(&util::get_shell(), util::get_term_size()?).unwrap();
-        self.windows.push(child);
+        self.windows.insert(window_idx, child);
         self.processors.push(Processor::new());
-        let window_idx = self.next_window;
         self.next_window += 1;
-        Ok(update.map(move |data| SessionPtyUpdate { window_idx, data }))
+        Ok((
+            window_idx,
+            update.map(move |data| SessionPtyUpdate { window_idx, data }),
+        ))
     }
 
     fn selected_window(&self) -> Option<&Window> {
-        self.windows.get(self.selected_window.unwrap())
+        self.windows.get(&self.selected_window.unwrap())
     }
 
     pub fn select_window(&mut self, idx: usize) -> Option<usize> {
-        match self.windows.get(idx) {
+        match self.windows.get(&idx) {
             Some(_) => {
                 self.selected_window = Some(idx);
                 Some(idx)
             }
             None => None,
         }
+    }
+
+    /// Get index of next oldest window.
+    pub fn next_window_idx(&self) -> Option<usize> {
+        self.windows
+            .range((self.selected_window? + 1)..)
+            .next()
+            .map(|(idx, _)| *idx)
+    }
+
+    /// Get index of next older window.
+    pub fn prev_window_idx(&self) -> Option<usize> {
+        self.windows
+            .range(..self.selected_window?)
+            .next_back()
+            .map(|(idx, _)| *idx)
+    }
+
+    /// Get index of oldest window.
+    pub fn first_window_idx(&self) -> Option<usize> {
+        self.windows.keys().next().map(|idx| *idx)
+    }
+
+    /// Get index of youngest window.
+    pub fn last_window_idx(&self) -> Option<usize> {
+        self.windows.keys().rev().next().map(|idx| *idx)
     }
 
     /// Receive stdin for the active `Window`.
@@ -80,9 +113,15 @@ impl Session {
     /// Update grid with PTY output.
     pub fn pty_update(&mut self, update: SessionPtyUpdate) {
         match update.data {
-            PtyUpdate::Exited => (),
+            PtyUpdate::Exited => {
+                debug!("removed window {}", update.window_idx);
+                self.windows.remove(&update.window_idx);
+                self.next_window_idx()
+                    .or(self.last_window_idx())
+                    .map(|idx| self.select_window(idx));
+            }
             PtyUpdate::Byte(byte) => {
-                let window = self.windows.get_mut(update.window_idx).unwrap();
+                let window = self.windows.get_mut(&update.window_idx).unwrap();
                 let mut reply = window.get_file().try_clone().unwrap();
                 self.processors.get_mut(update.window_idx).unwrap().advance(
                     &mut window.grid,
@@ -95,7 +134,7 @@ impl Session {
 
     pub fn resize_pty(&self, idx: usize) {
         let sz = util::get_term_size().unwrap();
-        self.windows.get(idx).unwrap().pty.resize(sz).unwrap();
+        self.windows.get(&idx).unwrap().pty.resize(sz).unwrap();
     }
 }
 
