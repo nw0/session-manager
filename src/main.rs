@@ -81,13 +81,15 @@ async fn event_loop(
 ) {
     let mut ptys_update = SelectAll::new();
     ptys_update.push(session.new_window().unwrap());
+    session.select_window(0);
     let mut sigwinch_stream = sigwinch_stream();
+
     loop {
         futures::select! {
             input = input_events.next() => {
                 match input {
                     Some((_, data)) => {
-                        session.stdin_to_window(0, &data).unwrap();
+                        session.receive_stdin(&data).unwrap();
                     },
                     None => unreachable!(),
                 }

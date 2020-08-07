@@ -1,6 +1,9 @@
 //! Structures and functions to manage windows.
 
-use std::{fs::File, io::Write};
+use std::{
+    fs::File,
+    io::{self, Write},
+};
 
 use anyhow::Result;
 use futures::{
@@ -20,6 +23,7 @@ use crate::{
 /// A collection of `Window`s.
 pub struct Session {
     next_window: usize,
+    selected_window: Option<usize>,
     windows: Vec<Window>,
     processors: Vec<Processor>,
 }
@@ -29,6 +33,7 @@ impl Session {
     pub fn new() -> Session {
         Session {
             next_window: 0,
+            selected_window: None,
             windows: Vec::new(),
             processors: Vec::new(),
         }
@@ -45,11 +50,25 @@ impl Session {
         Ok(update.map(move |byte| SessionPtyUpdate { window_idx, byte }))
     }
 
-    /// Send stdin to this `Window`.
-    pub fn stdin_to_window(&self, idx: usize, data: &[u8]) -> Result<(), ()> {
-        let mut file = self.windows.get(idx).expect("no such window").get_file();
-        file.write(data).unwrap();
-        file.flush().unwrap();
+    fn selected_window(&self) -> Option<&Window> {
+        self.windows.get(self.selected_window.unwrap())
+    }
+
+    pub fn select_window(&mut self, idx: usize) -> Option<usize> {
+        match self.windows.get(idx) {
+            Some(_) => {
+                self.selected_window = Some(idx);
+                Some(idx)
+            }
+            None => None,
+        }
+    }
+
+    /// Receive stdin for the active `Window`.
+    pub fn receive_stdin(&self, data: &[u8]) -> Result<(), io::Error> {
+        let mut file = self.selected_window().unwrap().get_file();
+        file.write(data)?;
+        file.flush()?;
         Ok(())
     }
 
