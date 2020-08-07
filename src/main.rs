@@ -96,10 +96,20 @@ async fn event_loop(
                         Some((PREFIX, data)) => {
                             session.receive_stdin(&data).unwrap();
                         },
+                        Some((Event::Key(Key::Char('c')), _)) => {
+                            ptys_update.push(session.new_window().unwrap());
+                        },
+                        Some((Event::Key(Key::Char('0')), _)) => {
+                            session.select_window(0);
+                        },
+                        Some((Event::Key(Key::Char('1')), _)) => {
+                            session.select_window(1);
+                        },
                         None => unreachable!(),
                         _ => info!("unhandled event: {:?}", input)
                     }
                     manage_mode = false;
+                    session.redraw(tty_output);
                 }
                 else {
                     match input {
