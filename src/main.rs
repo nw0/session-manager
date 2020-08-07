@@ -1,6 +1,7 @@
 //! Session manager
 //!
 //! A would-be terminal multiplexer.
+#![recursion_limit = "256"]
 
 use std::{fs::File, thread};
 
@@ -18,12 +19,14 @@ use log4rs::{
 use signal_hook::{iterator::Signals, SIGWINCH};
 use termion::{
     self,
-    event::Event,
+    event::{Event, Key},
     input::{EventsAndRaw, TermReadEventsAndRaw},
     raw::{IntoRawMode, RawTerminal},
 };
 
 use session_manager::session::Session;
+
+const PREFIX: Event = Event::Key(Key::Ctrl('b'));
 
 fn main() -> Result<()> {
     let logfile = FileAppender::builder()
@@ -83,15 +86,31 @@ async fn event_loop(
     ptys_update.push(session.new_window().unwrap());
     session.select_window(0);
     let mut sigwinch_stream = sigwinch_stream();
+    let mut manage_mode = false;
 
     loop {
         futures::select! {
             input = input_events.next() => {
-                match input {
-                    Some((_, data)) => {
-                        session.receive_stdin(&data).unwrap();
-                    },
-                    None => unreachable!(),
+                if manage_mode {
+                    match input {
+                        Some((PREFIX, data)) => {
+                            session.receive_stdin(&data).unwrap();
+                        },
+                        None => unreachable!(),
+                        _ => info!("unhandled event: {:?}", input)
+                    }
+                    manage_mode = false;
+                }
+                else {
+                    match input {
+                        Some((PREFIX, _)) => {
+                            manage_mode = true;
+                        }
+                        Some((event, data)) => {
+                                session.receive_stdin(&data).unwrap();
+                        },
+                        None => unreachable!(),
+                    }
                 }
             }
             pty_update = ptys_update.next() => {
