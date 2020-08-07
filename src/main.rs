@@ -118,7 +118,8 @@ async fn event_loop(
                     info!("last pty exited");
                     return;
                 }
-                session.pty_update(pty_update.unwrap(), tty_output);
+                session.pty_update(pty_update.unwrap());
+                session.redraw(tty_output);
             }
             _ = sigwinch_stream.next() => {
                 session.resize_pty(0);

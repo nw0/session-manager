@@ -72,12 +72,13 @@ impl Session {
         Ok(())
     }
 
+    /// Draw the selected `Window` to the given terminal.
+    pub fn redraw(&self, tty_output: &mut RawTerminal<File>) {
+        self.selected_window().unwrap().grid.draw(tty_output);
+    }
+
     /// Update grid with PTY output.
-    pub fn pty_update(
-        &mut self,
-        update: SessionPtyUpdate,
-        tty_output: &mut RawTerminal<File>,
-    ) {
+    pub fn pty_update(&mut self, update: SessionPtyUpdate) {
         match update.data {
             PtyUpdate::Exited => (),
             PtyUpdate::Byte(byte) => {
@@ -88,7 +89,6 @@ impl Session {
                     byte,
                     &mut reply,
                 );
-                window.grid.draw(tty_output);
             }
         }
     }
