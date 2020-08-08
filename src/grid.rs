@@ -148,39 +148,30 @@ impl<W: Write> Grid<W> {
         // no scrolling
     }
 
-    fn scroll_up_in_region(&mut self, start: u16, lines: u16) {
+    fn scroll_up_in_region(&mut self, start: u16, end: u16, lines: u16) {
         // Move text UP
-        trace!(
-            "scroll UP, region: ({:?}, lines: {})",
-            self.scrolling_region,
-            lines
-        );
+        trace!("SU ({}), rows: ({}, {})", lines, start, end);
         if lines < 1 {
             return;
         }
-        for row in start..self.scrolling_region.end {
+        for row in start..end {
             for col in 0..self.width {
-                *self.cell_at_mut(CursorPos { col, row }) =
-                    if row + lines < self.scrolling_region.end {
-                        *self.cell_at(CursorPos::at(col, row + lines))
-                    } else {
-                        Cell::default()
-                    };
+                *self.cell_at_mut(CursorPos { col, row }) = if row + lines < end {
+                    *self.cell_at(CursorPos::at(col, row + lines))
+                } else {
+                    Cell::default()
+                };
             }
         }
     }
 
-    fn scroll_down_in_region(&mut self, start: u16, lines: u16) {
+    fn scroll_down_in_region(&mut self, start: u16, end: u16, lines: u16) {
         // Move text DOWN
-        trace!(
-            "scroll DOWN, region: ({:?}), lines: {}",
-            self.scrolling_region,
-            lines
-        );
+        trace!("SD ({}), rows ({}, {})", lines, start, end);
         if lines < 1 {
             return;
         }
-        for row in (start..self.scrolling_region.end).rev() {
+        for row in (start..end).rev() {
             for col in 0..self.width {
                 *self.cell_at_mut(CursorPos { col, row }) = if row >= lines + start {
                     *self.cell_at(CursorPos::at(col, row - lines))
@@ -342,6 +333,7 @@ impl<W: Write> Handler<W> for Grid<W> {
     fn scroll_up(&mut self, rows: usize) {
         self.scroll_up_in_region(
             self.scrolling_region.start,
+            self.scrolling_region.end,
             u16::try_from(rows).unwrap(),
         );
     }
@@ -349,6 +341,7 @@ impl<W: Write> Handler<W> for Grid<W> {
     fn scroll_down(&mut self, rows: usize) {
         self.scroll_down_in_region(
             self.scrolling_region.start,
+            self.scrolling_region.end,
             u16::try_from(rows).unwrap(),
         );
     }
@@ -358,7 +351,11 @@ impl<W: Write> Handler<W> for Grid<W> {
         if !self.scrolling_region.contains(&self.cursor.row) {
             return;
         }
-        self.scroll_down_in_region(self.cursor.row, u16::try_from(rows).unwrap());
+        self.scroll_down_in_region(
+            self.cursor.row,
+            self.scrolling_region.end,
+            u16::try_from(rows).unwrap(),
+        );
     }
 
     fn delete_lines(&mut self, rows: usize) {
@@ -367,7 +364,7 @@ impl<W: Write> Handler<W> for Grid<W> {
         if !self.scrolling_region.contains(&self.cursor.row) {
             return;
         }
-        self.scroll_up_in_region(self.cursor.row, rows);
+        self.scroll_up_in_region(self.cursor.row, self.scrolling_region.end, rows);
     }
 
     fn erase_chars(&mut self, cols: usize) {
