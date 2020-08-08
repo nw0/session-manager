@@ -278,16 +278,14 @@ impl<W: Write> Handler<W> for Grid<W> {
 
     fn input(&mut self, c: char) {
         // TODO: handle c.width() != 1
+        if self.cursor == CursorPos::at(0, self.scrolling_region.end) {
+            self.scroll_up(1);
+            self.cursor.row -= 1;
+        }
         self.cell_at_mut(self.cursor).c = c;
         self.cursor.col += 1;
         if self.cursor.col == self.width {
-            // FIXME: want to change this to self.linefeed, but it breaks tmux
-            // I suspect we only want to linefeed if there is actual input on the next row
-            // TODO: test case for this scenario
             self.cursor.row += 1;
-            if self.cursor.row == self.scrolling_region.end {
-                self.cursor.row -= 1;
-            }
             self.carriage_return();
         }
     }
@@ -611,7 +609,7 @@ impl<W: Write> Handler<W> for Grid<W> {
     fn pop_title(&mut self) {}
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Cell {
     pub c: char,
 }
@@ -684,6 +682,20 @@ mod tests {
         grid.device_status(&mut sink, 6);
         source.read_to_end(&mut buf).unwrap();
         assert_eq!(str::from_utf8(&buf).unwrap(), "\x1b[3;4R"); // 1-indexed cursor pos
+    }
+
+    #[test]
+    fn input_scroll() {
+        let mut grid = Grid::<Sink>::new(4, 2);
+        "Hello ".to_string().chars().for_each(|c| grid.input(c));
+        assert_eq!(grid.buffer[CursorPos::at(0, 0)].c, 'H');
+        assert_eq!(grid.buffer[CursorPos::at(0, 1)].c, 'o');
+        assert_eq!(grid.buffer[CursorPos::at(2, 1)], Cell::default());
+        "World!".to_string().chars().for_each(|c| grid.input(c));
+        assert_eq!(grid.buffer[CursorPos::at(0, 1)].c, 'r');
+        assert_eq!(grid.buffer[CursorPos::at(3, 1)].c, '!');
+        assert_eq!(grid.buffer[CursorPos::at(0, 0)].c, 'o');
+        assert_eq!(grid.buffer[CursorPos::at(2, 0)].c, 'W');
     }
 
     // TODO: test input/draw
