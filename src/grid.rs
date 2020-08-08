@@ -78,6 +78,7 @@ impl<W: Write> Grid<W> {
 
     /// Mark all rows as dirty.
     pub fn mark_all_dirty(&mut self) {
+        self.dirty_rows.clear();
         self.dirty_rows.extend(0..self.height);
     }
 
@@ -99,6 +100,33 @@ impl<W: Write> Grid<W> {
         }
         write!(term, "{}", Goto::from(self.cursor)).unwrap();
         self.dirty_rows.clear();
+    }
+
+    /// Resize this grid (not its connected PTY).
+    pub fn resize(&mut self, new_cols: u16, new_height: u16) {
+        // TODO: support re-flowing
+        if new_height < self.height {
+            if self.cursor.row >= new_height {
+                self.scroll_up_in_region(
+                    0,
+                    self.cursor.row + 1,
+                    self.cursor.row - new_height + 1,
+                );
+                self.cursor.row = new_height - 1;
+            }
+            self.saved_cursor.row = min(self.saved_cursor.row, new_height - 1);
+            self.scrolling_region.end = min(self.scrolling_region.end, new_height);
+        }
+        if self.height < new_height {
+            if self.scrolling_region.end == self.height {
+                self.scrolling_region.end = new_height;
+            }
+        }
+        self.height = new_height;
+
+        self.buffer
+            .resize(self.width as usize * self.height as usize, Cell::default());
+        self.mark_all_dirty();
     }
 
     fn buffer_idx(&self, pos: CursorPos) -> usize {
@@ -312,7 +340,12 @@ impl<W: Write> Handler<W> for Grid<W> {
         } else if self.cursor.row + 1 < self.height {
             self.cursor.row += 1;
         } else {
-            debug!("tried to scroll past end of grid");
+            debug!(
+                "LF: can't scroll ({}, {}, {})",
+                self.cursor.row + 1,
+                self.scrolling_region.end,
+                self.height
+            );
         }
     }
 

@@ -140,6 +140,7 @@ async fn event_loop(
             }
             _ = sigwinch_stream.next() => {
                 session.resize_pty(0);
+                session.redraw(tty_output);
             }
         }
     }

@@ -137,9 +137,9 @@ impl Session {
         }
     }
 
-    pub fn resize_pty(&self, idx: usize) {
+    pub fn resize_pty(&mut self, idx: usize) {
         let sz = util::get_term_size().unwrap();
-        self.windows.get(&idx).unwrap().pty.resize(sz).unwrap();
+        self.selected_window_mut().unwrap().resize(sz);
     }
 }
 
@@ -170,5 +170,10 @@ impl Window {
 
     pub fn get_file(&self) -> &File {
         &self.pty.file
+    }
+
+    pub fn resize(&mut self, sz: Winsize) {
+        self.grid.resize(sz.ws_col, sz.ws_row);
+        self.pty.resize(sz).unwrap();
     }
 }
