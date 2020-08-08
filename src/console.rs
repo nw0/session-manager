@@ -10,7 +10,10 @@ use std::{
     thread,
 };
 
-use futures::channel::mpsc::{self, Receiver};
+use futures::{
+    channel::mpsc::{self, Receiver},
+    executor, future,
+};
 use nix::{
     pty::{openpty, Winsize},
     unistd::setsid,
@@ -38,7 +41,8 @@ where
     let (mut send, pty_update) = mpsc::channel(0x1000);
     thread::spawn(move || {
         while let Some(Ok(byte)) = pty_output.next() {
-            send.try_send(PtyUpdate::Byte(byte)).unwrap();
+            executor::block_on(future::poll_fn(|cx| send.poll_ready(cx))).unwrap();
+            send.start_send(PtyUpdate::Byte(byte)).unwrap();
         }
         send.try_send(PtyUpdate::Exited).unwrap();
         send.disconnect();
@@ -48,6 +52,7 @@ where
 }
 
 /// An update from a PTY.
+#[derive(Debug, PartialEq, Eq)]
 pub enum PtyUpdate {
     /// The PTY has closed the file.
     Exited,
@@ -108,27 +113,41 @@ impl ChildPty {
 mod tests {
     use super::*;
 
+    use std::path::{Path, PathBuf};
+
+    use futures::stream::StreamExt;
+
+    const WINSZ: Winsize = Winsize {
+        ws_row: 24,
+        ws_col: 80,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+
     #[test]
     fn open_child_pty() {
         use std::io::Read;
-        use std::path::Path;
         use std::str;
 
-        let mut child = ChildPty::new(
-            "pwd",
-            Winsize {
-                ws_row: 24,
-                ws_col: 80,
-                ws_xpixel: 0,
-                ws_ypixel: 0,
-            },
-        )
-        .unwrap();
         let args: [&str; 0] = [];
         let mut child = ChildPty::new("pwd", &args, WINSZ).unwrap();
         let mut buffer = [0; 1024];
         let count = child.file.read(&mut buffer).unwrap();
         let data = str::from_utf8(&buffer[..count]).unwrap().trim();
         assert_eq!(Path::new(&data), std::env::current_dir().unwrap());
+    }
+
+    #[test]
+    fn regulate_pty_update() {
+        let mut dir = PathBuf::from(std::env!("CARGO_MANIFEST_DIR"));
+        dir.push("Cargo.lock"); // a suitably long file
+        let (_, _, mut recv) =
+            spawn_pty("cat", &[&dir.into_os_string()], WINSZ).unwrap();
+        while let Some(msg) = executor::block_on(recv.next()) {
+            if msg == PtyUpdate::Exited {
+                return;
+            }
+        }
+        assert!(false, "update thread did not exit cleanly")
     }
 }
