@@ -28,6 +28,7 @@ pub struct Session {
     selected_window: Option<usize>,
     windows: BTreeMap<usize, Window>,
     processors: Vec<Processor>,
+    size: Winsize,
 }
 
 impl Session {
@@ -38,6 +39,7 @@ impl Session {
             selected_window: None,
             windows: BTreeMap::new(),
             processors: Vec::new(),
+            size: util::get_term_size().unwrap(),
         }
     }
 
@@ -46,8 +48,7 @@ impl Session {
         &mut self,
     ) -> Result<(usize, impl Stream<Item = SessionPtyUpdate>)> {
         let window_idx = self.next_window;
-        let (child, update) =
-            Window::new(&util::get_shell(), util::get_term_size()?).unwrap();
+        let (child, update) = Window::new(&util::get_shell(), self.size).unwrap();
         self.windows.insert(window_idx, child);
         self.processors.push(Processor::new());
         self.next_window += 1;
@@ -69,7 +70,10 @@ impl Session {
         match self.windows.get(&idx) {
             Some(_) => {
                 self.selected_window = Some(idx);
-                self.selected_window_mut().unwrap().grid.mark_all_dirty();
+                let sz = self.size;
+                let window = self.selected_window_mut().unwrap();
+                window.resize(sz);
+                window.grid.mark_all_dirty();
                 Some(idx)
             }
             None => None,
@@ -141,8 +145,9 @@ impl Session {
     ///
     /// Strategy: resize the active `Window`, and resize other `Window`s when they are
     /// selected.
-    pub fn resize_pty(&mut self, idx: usize) {
+    pub fn resize(&mut self) {
         let sz = util::get_term_size().unwrap();
+        self.size = sz;
         self.selected_window_mut().unwrap().resize(sz);
     }
 }
@@ -161,6 +166,7 @@ pub struct SessionPtyUpdate {
 pub struct Window {
     pub pty: ChildPty,
     pub grid: Grid<File>,
+    size: Winsize,
 }
 
 impl Window {
@@ -169,7 +175,7 @@ impl Window {
         size: Winsize,
     ) -> Result<(Window, Receiver<PtyUpdate>), ()> {
         let (pty, grid, pty_update) = console::spawn_pty(command, size)?;
-        Ok((Window { pty, grid }, pty_update))
+        Ok((Window { pty, grid, size }, pty_update))
     }
 
     pub fn get_file(&self) -> &File {
@@ -177,7 +183,10 @@ impl Window {
     }
 
     pub fn resize(&mut self, sz: Winsize) {
-        self.grid.resize(sz.ws_col, sz.ws_row);
-        self.pty.resize(sz).unwrap();
+        if sz != self.size {
+            self.size = sz;
+            self.grid.resize(sz.ws_col, sz.ws_row);
+            self.pty.resize(sz).unwrap();
+        }
     }
 }
