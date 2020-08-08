@@ -174,7 +174,8 @@ impl Window {
         command: &str,
         size: Winsize,
     ) -> Result<(Window, Receiver<PtyUpdate>), ()> {
-        let (pty, grid, pty_update) = console::spawn_pty(command, size)?;
+        let args: [&str; 0] = [];
+        let (pty, grid, pty_update) = console::spawn_pty(command, &args, size)?;
         Ok((Window { pty, grid, size }, pty_update))
     }
 

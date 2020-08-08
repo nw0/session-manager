@@ -1,6 +1,7 @@
 //! Structures to manage a pseudoterminal.
 
 use std::{
+    ffi::OsStr,
     fs::File,
     io::Read,
     os::unix::io::{FromRawFd, RawFd},
@@ -23,11 +24,16 @@ mod ioctl {
 }
 
 /// Initialise a new process and grid.
-pub fn spawn_pty(
+pub fn spawn_pty<I, S>(
     command: &str,
+    args: I,
     size: Winsize,
-) -> Result<(ChildPty, Grid<File>, Receiver<PtyUpdate>), ()> {
-    let child_pty = ChildPty::new(command, size)?;
+) -> Result<(ChildPty, Grid<File>, Receiver<PtyUpdate>), ()>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let child_pty = ChildPty::new(command, args, size)?;
     let mut pty_output = child_pty.file.try_clone().unwrap().bytes();
     let (mut send, pty_update) = mpsc::channel(0x1000);
     thread::spawn(move || {
@@ -58,10 +64,15 @@ pub struct ChildPty {
 
 impl ChildPty {
     /// Spawn a process in a new pty.
-    pub fn new(shell: &str, size: Winsize) -> Result<ChildPty, ()> {
+    pub fn new<I, S>(command: &str, args: I, size: Winsize) -> Result<ChildPty, ()>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
         let pty = openpty(&size, None).unwrap();
         unsafe {
-            Command::new(&shell)
+            Command::new(&command)
+                .args(args)
                 .stdin(Stdio::from_raw_fd(pty.slave))
                 .stdout(Stdio::from_raw_fd(pty.slave))
                 .stderr(Stdio::from_raw_fd(pty.slave))
@@ -113,6 +124,8 @@ mod tests {
             },
         )
         .unwrap();
+        let args: [&str; 0] = [];
+        let mut child = ChildPty::new("pwd", &args, WINSZ).unwrap();
         let mut buffer = [0; 1024];
         let count = child.file.read(&mut buffer).unwrap();
         let data = str::from_utf8(&buffer[..count]).unwrap().trim();
