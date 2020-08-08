@@ -153,7 +153,7 @@ impl<W: Write> Grid<W> {
     }
 
     /// Resize this grid (not its connected PTY).
-    pub fn resize(&mut self, new_cols: u16, new_height: u16) {
+    pub fn resize(&mut self, new_width: u16, new_height: u16) {
         // TODO: support re-flowing
         if new_height < self.height {
             if self.cursor.row >= new_height {
@@ -173,10 +173,20 @@ impl<W: Write> Grid<W> {
             }
         }
         self.height = new_height;
-
         self.buffer
             .rows
             .resize(self.height as usize, Row::new(self.width, Cell::default()));
+
+        if new_width < self.width {
+            self.cursor.row = min(self.cursor.row, new_width - 1);
+            self.saved_cursor.row = min(self.saved_cursor.row, new_width - 1);
+        }
+        self.width = new_width;
+        self.buffer
+            .rows
+            .iter_mut()
+            .for_each(|row| row.buf.resize(new_width as usize, Cell::default()));
+
         self.mark_all_dirty();
     }
 

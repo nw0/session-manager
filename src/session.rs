@@ -137,6 +137,10 @@ impl Session {
         }
     }
 
+    /// Resize this session.
+    ///
+    /// Strategy: resize the active `Window`, and resize other `Window`s when they are
+    /// selected.
     pub fn resize_pty(&mut self, idx: usize) {
         let sz = util::get_term_size().unwrap();
         self.selected_window_mut().unwrap().resize(sz);
