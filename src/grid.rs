@@ -1,13 +1,14 @@
 //! Console buffer implementation.
 
 use std::{
-    cmp::{max, min},
+    cmp::{max, min, Ord, Ordering, PartialOrd},
     collections::BTreeSet,
     convert::{TryFrom, TryInto},
     fs::File,
     io::Write,
+    iter::Iterator,
     marker::PhantomData,
-    ops::Range,
+    ops::{Index, IndexMut, Range},
 };
 
 use log::{debug, info, trace, warn};
@@ -46,6 +47,57 @@ impl From<CursorPos> for Goto {
     }
 }
 
+impl PartialOrd for CursorPos {
+    fn partial_cmp(&self, other: &CursorPos) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CursorPos {
+    fn cmp(&self, other: &CursorPos) -> Ordering {
+        self.row.cmp(&other.row).then(self.col.cmp(&other.col))
+    }
+}
+
+#[derive(Clone)]
+struct Row<C: Clone + Copy> {
+    buf: Vec<C>,
+}
+
+impl<C: Clone + Copy> Row<C> {
+    pub fn new(cols: u16, fill: C) -> Row<C> {
+        Row {
+            buf: vec![fill; cols as usize],
+        }
+    }
+}
+
+struct GridBuffer<C: Clone + Copy> {
+    rows: Vec<Row<C>>,
+}
+
+impl<C: Clone + Copy> GridBuffer<C> {
+    pub fn new(cols: u16, rows: u16, fill: C) -> GridBuffer<C> {
+        GridBuffer {
+            rows: vec![Row::new(cols, fill); rows as usize],
+        }
+    }
+}
+
+impl<C: Clone + Copy> Index<CursorPos> for GridBuffer<C> {
+    type Output = C;
+
+    fn index(&self, pos: CursorPos) -> &Self::Output {
+        &self.rows[pos.row as usize].buf[pos.col as usize]
+    }
+}
+
+impl<C: Clone + Copy> IndexMut<CursorPos> for GridBuffer<C> {
+    fn index_mut(&mut self, pos: CursorPos) -> &mut Self::Output {
+        &mut self.rows[pos.row as usize].buf[pos.col as usize]
+    }
+}
+
 /// The display buffer of a console.
 pub struct Grid<W> {
     cursor: CursorPos,
@@ -53,7 +105,7 @@ pub struct Grid<W> {
     scrolling_region: Range<u16>,
     width: u16,
     height: u16,
-    buffer: Vec<Cell>,
+    buffer: GridBuffer<Cell>,
     dirty_rows: BTreeSet<u16>,
     _phantom: PhantomData<W>,
 }
@@ -61,8 +113,6 @@ pub struct Grid<W> {
 impl<W: Write> Grid<W> {
     /// Initialise an empty display buffer.
     pub fn new(width: u16, height: u16) -> Grid<W> {
-        let sz = width * height;
-        let buffer = vec![Cell::default(); sz as usize];
         let dirty_rows = (0..height).collect();
         Grid {
             cursor: Default::default(),
@@ -70,7 +120,7 @@ impl<W: Write> Grid<W> {
             scrolling_region: 0..height,
             width,
             height,
-            buffer,
+            buffer: GridBuffer::new(width, height, Cell::default()),
             dirty_rows,
             _phantom: Default::default(),
         }
@@ -86,12 +136,12 @@ impl<W: Write> Grid<W> {
     pub fn draw(&mut self, term: &mut RawTerminal<File>) {
         for row in self.dirty_rows.iter() {
             let start = CursorPos { row: *row, col: 0 };
-            let end = CursorPos::at(self.width - 1, *row);
             write!(
                 term,
                 "{}{}",
                 Goto::from(start),
-                self.buffer[self.buffer_idx(start)..self.buffer_idx(end)]
+                self.buffer.rows[*row as usize]
+                    .buf
                     .iter()
                     .map(|c| c.c)
                     .collect::<String>()
@@ -125,23 +175,18 @@ impl<W: Write> Grid<W> {
         self.height = new_height;
 
         self.buffer
-            .resize(self.width as usize * self.height as usize, Cell::default());
+            .rows
+            .resize(self.height as usize, Row::new(self.width, Cell::default()));
         self.mark_all_dirty();
     }
 
-    fn buffer_idx(&self, pos: CursorPos) -> usize {
-        // TODO: check row, col are in bounds
-        (pos.col + pos.row * self.width).into()
-    }
-
     fn cell_at(&self, pos: CursorPos) -> &Cell {
-        &self.buffer[self.buffer_idx(pos)]
+        &self.buffer[pos]
     }
 
     fn cell_at_mut(&mut self, pos: CursorPos) -> &mut Cell {
-        let idx = self.buffer_idx(pos);
         self.dirty_rows.insert(pos.row);
-        &mut self.buffer[idx]
+        &mut self.buffer[pos]
     }
 
     fn move_horizontal(&mut self, displacement: Displace) {
@@ -443,45 +488,37 @@ impl<W: Write> Handler<W> for Grid<W> {
 
     fn clear_line(&mut self, mode: LineClearMode) {
         let range = match mode {
-            LineClearMode::All => {
-                self.buffer_idx(CursorPos {
-                    col: 0,
-                    row: self.cursor.row,
-                })..self.buffer_idx(CursorPos {
-                    col: self.width,
-                    row: self.cursor.row,
-                })
-            }
-            LineClearMode::Left => {
-                self.buffer_idx(CursorPos {
-                    col: 0,
-                    row: self.cursor.row,
-                })..self.buffer_idx(self.cursor)
-            }
-            LineClearMode::Right => {
-                self.buffer_idx(self.cursor)..self.buffer_idx(CursorPos {
-                    col: self.width,
-                    row: self.cursor.row,
-                })
-            }
+            LineClearMode::All => 0..(self.width as usize),
+            LineClearMode::Left => 0..(self.cursor.col as usize),
+            LineClearMode::Right => (self.cursor.col as usize)..(self.width as usize),
         };
         self.dirty_rows.insert(self.cursor.row);
-        self.buffer[range]
+        self.buffer.rows[self.cursor.row as usize].buf[range]
             .iter_mut()
             .for_each(|i| *i = Cell::default());
     }
 
     fn clear_screen(&mut self, mode: ClearMode) {
         let range = match mode {
-            ClearMode::All | ClearMode::Saved => 0..self.buffer.len(),
-            ClearMode::Above => 0..self.buffer_idx(self.cursor),
-            ClearMode::Below => self.buffer_idx(self.cursor)..self.buffer.len(),
+            ClearMode::All | ClearMode::Saved => {
+                CursorPos::at(0, 0)..CursorPos::at(0, self.height)
+            }
+            ClearMode::Above => CursorPos::at(0, 0)..self.cursor,
+            ClearMode::Below => self.cursor..CursorPos::at(0, self.height),
         };
         // TODO: only mark cleared rows
-        self.dirty_rows.extend(0..self.height);
-        self.buffer[range]
+        self.mark_all_dirty();
+        self.buffer
+            .rows
             .iter_mut()
-            .for_each(|i| *i = Cell::default());
+            .enumerate()
+            .flat_map(|(ri, row)| row.buf.iter_mut().map(move |c| (ri, c)))
+            .enumerate()
+            .for_each(|(col, (row, cell))| {
+                if range.contains(&CursorPos::at(col as u16, row as u16)) {
+                    *cell = Cell::default();
+                }
+            });
     }
 
     fn clear_tabs(&mut self, _mode: TabulationClearMode) {
