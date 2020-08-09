@@ -744,10 +744,19 @@ mod tests {
         check_char!(grid, 1, 1, 'o');
         assert_eq!(grid.buffer[CursorPos::at(3, 1)], Cell::default());
         check_char!(grid, 0, 2, 'r');
+        grid.insert_blank(1);
+        check_char!(grid, 2, 1, 'o');
+        grid.insert_blank(5);
+        check_char!(grid, 1, 0, 'e');
+        check_char!(grid, 0, 1, 'o');
+        assert_eq!(grid.buffer[CursorPos::at(3, 1)], Cell::default());
+        assert_eq!(grid.buffer[CursorPos::at(2, 1)], Cell::default());
+        assert_eq!(grid.buffer[CursorPos::at(1, 1)], Cell::default());
+        check_char!(grid, 0, 2, 'r');
 
         grid.set_scrolling_region(1, Some(2));
         grid.delete_lines(1);
-        check_char!(grid, 1, 0, 'o');
+        check_char!(grid, 0, 0, 'o');
         assert_eq!(grid.buffer[CursorPos::at(2, 0)], Cell::default());
         assert_eq!(grid.buffer[CursorPos::at(0, 1)], Cell::default());
         check_char!(grid, 1, 2, 'l');
