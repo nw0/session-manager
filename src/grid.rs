@@ -155,16 +155,17 @@ impl<W: Write> Grid<W> {
     pub fn resize(&mut self, new_width: u16, new_height: u16) {
         // TODO: support re-flowing
         if new_height < self.height {
-            if self.cursor.row >= new_height {
-                self.scroll_up_in_region(
-                    0,
-                    self.cursor.row + 1,
-                    self.cursor.row - new_height + 1,
-                );
-                self.cursor.row = new_height - 1;
+            let end = if self.cursor.col == 0 {
+                self.cursor.row
+            } else {
+                1 + self.cursor.row
+            };
+            if end > new_height {
+                self.scroll_up_in_region(0, end, end - new_height);
+                self.cursor.row -= end - new_height;
             }
-            self.saved_cursor.row = min(self.saved_cursor.row, new_height - 1);
             self.scrolling_region.end = min(self.scrolling_region.end, new_height);
+            self.saved_cursor.row = min(self.saved_cursor.row, new_height - 1);
         }
         if self.height < new_height {
             if self.scrolling_region.end == self.height {
@@ -627,6 +628,18 @@ mod tests {
     use std::str;
     use tempfile::NamedTempFile;
 
+    macro_rules! input_str {
+        ($grid:expr, $str:expr) => {
+            $str.to_string().chars().for_each(|c| $grid.input(c))
+        };
+    }
+
+    macro_rules! check_char {
+        ($grid:expr, $col:expr, $row:expr, $char:expr) => {
+            assert_eq!($grid.buffer[CursorPos::at($col, $row)].c, $char)
+        }
+    }
+
     #[test]
     fn goto() {
         let mut grid = Grid::<Sink>::new(4, 4);
@@ -686,15 +699,59 @@ mod tests {
     #[test]
     fn input_scroll() {
         let mut grid = Grid::<Sink>::new(4, 2);
-        "Hello ".to_string().chars().for_each(|c| grid.input(c));
-        assert_eq!(grid.buffer[CursorPos::at(0, 0)].c, 'H');
-        assert_eq!(grid.buffer[CursorPos::at(0, 1)].c, 'o');
+        input_str!(grid, "Hello ");
+        check_char!(grid, 0, 0, 'H');
+        check_char!(grid, 0, 1, 'o');
         assert_eq!(grid.buffer[CursorPos::at(2, 1)], Cell::default());
-        "World!".to_string().chars().for_each(|c| grid.input(c));
-        assert_eq!(grid.buffer[CursorPos::at(0, 1)].c, 'r');
-        assert_eq!(grid.buffer[CursorPos::at(3, 1)].c, '!');
-        assert_eq!(grid.buffer[CursorPos::at(0, 0)].c, 'o');
-        assert_eq!(grid.buffer[CursorPos::at(2, 0)].c, 'W');
+        input_str!(grid, "World!");
+        check_char!(grid, 0, 1, 'r');
+        check_char!(grid, 3, 1, '!');
+        check_char!(grid, 0, 0, 'o');
+        check_char!(grid, 2, 0, 'W');
+    }
+
+    #[test]
+    fn resize_scroll_up() {
+        let mut grid = Grid::<Sink>::new(4, 4);
+        input_str!(grid, "Hello World");
+        check_char!(grid, 0, 0, 'H');
+        check_char!(grid, 2, 1, 'W');
+        check_char!(grid, 0, 2, 'r');
+        assert_eq!(grid.cursor, CursorPos::at(3, 2));
+        grid.resize(4, 3);
+        check_char!(grid, 0, 0, 'H');
+        check_char!(grid, 2, 1, 'W');
+        check_char!(grid, 0, 2, 'r');
+        assert_eq!(grid.cursor, CursorPos::at(3, 2));
+        grid.resize(4, 2);
+        check_char!(grid, 0, 0, 'o');
+        check_char!(grid, 1, 0, ' ');
+        check_char!(grid, 1, 1, 'l');
+        assert_eq!(grid.cursor, CursorPos::at(3, 1));
+        assert_eq!(grid.height, 2);
+    }
+
+    #[test]
+    fn resize_scroll_up_newline() {
+        // Slightly trickier: cursor is at the start of a new line.
+        let mut grid = Grid::<Sink>::new(4, 4);
+        input_str!(grid, "Hello World!");
+        check_char!(grid, 0, 0, 'H');
+        check_char!(grid, 2, 1, 'W');
+        check_char!(grid, 0, 2, 'r');
+        assert_eq!(grid.cursor, CursorPos::at(0, 3));
+        grid.resize(4, 3);
+        check_char!(grid, 0, 0, 'H');
+        check_char!(grid, 2, 1, 'W');
+        check_char!(grid, 0, 2, 'r');
+        assert_eq!(grid.cursor.row, 3);
+        assert_eq!(grid.cursor, CursorPos::at(0, 3));
+        grid.resize(4, 2);
+        check_char!(grid, 0, 0, 'o');
+        check_char!(grid, 1, 0, ' ');
+        check_char!(grid, 1, 1, 'l');
+        assert_eq!(grid.cursor, CursorPos::at(0, 2));
+        assert_eq!(grid.height, 2);
     }
 
     // TODO: test input/draw
