@@ -658,6 +658,54 @@ mod tests {
     }
 
     #[test]
+    fn overshoot() {
+        let mut grid = Grid::<Sink>::new(4, 3);
+        grid.goto(0, 0);
+        grid.goto_line(3);
+        check_cur!(grid, 0, 2);
+        grid.goto_col(4);
+        check_cur!(grid, 3, 2);
+        grid.move_backward(40);
+        check_cur!(grid, 0, 2);
+        grid.move_backward(1);
+        check_cur!(grid, 0, 2);
+        grid.move_up(3);
+        check_cur!(grid, 0, 0);
+        grid.move_forward(10);
+        check_cur!(grid, 3, 0);
+        grid.move_down_and_cr(10);
+        check_cur!(grid, 0, 2);
+        input_str!(grid, "Hello World!");
+        check_cur!(grid, 0, 3); // one past end (!)
+    }
+
+    #[test]
+    fn insert_delete() {
+        let mut grid = Grid::<Sink>::new(4, 3);
+        input_str!(grid, "Hello World!");
+        grid.goto(1, 1);
+        grid.erase_chars(1);
+        assert_eq!(grid.buffer[CursorPos::at(1, 1)], Cell::default());
+        check_char!(grid, 2, 1, 'W');
+        grid.delete_chars(2);
+        check_char!(grid, 0, 1, 'o');
+        check_char!(grid, 1, 1, 'o');
+        assert_eq!(grid.buffer[CursorPos::at(3, 1)], Cell::default());
+        check_char!(grid, 0, 2, 'r');
+
+        grid.set_scrolling_region(1, Some(2));
+        grid.delete_lines(1);
+        check_char!(grid, 1, 0, 'o');
+        assert_eq!(grid.buffer[CursorPos::at(2, 0)], Cell::default());
+        assert_eq!(grid.buffer[CursorPos::at(0, 1)], Cell::default());
+        check_char!(grid, 1, 2, 'l');
+        grid.insert_blank_lines(1);
+        assert_eq!(grid.buffer[CursorPos::at(0, 0)], Cell::default());
+        check_char!(grid, 0, 1, 'o');
+        check_char!(grid, 2, 2, 'd');
+    }
+
+    #[test]
     fn linefeed_reverse_idx() {
         let mut grid = Grid::<Sink>::new(8, 3);
         grid.goto(1, 0); // row, col
