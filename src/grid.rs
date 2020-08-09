@@ -4,7 +4,6 @@ use std::{
     cmp::{max, min, Ord, Ordering, PartialOrd},
     collections::BTreeSet,
     convert::{TryFrom, TryInto},
-    fs::File,
     io::Write,
     iter::Iterator,
     marker::PhantomData,
@@ -12,7 +11,7 @@ use std::{
 };
 
 use log::{debug, info, trace, warn};
-use termion::{cursor::Goto, raw::RawTerminal};
+use termion::cursor::Goto;
 use vte::ansi::{
     Attr, CharsetIndex, ClearMode, CursorStyle, Handler, LineClearMode, Mode, Rgb,
     StandardCharset, TabulationClearMode,
@@ -133,7 +132,7 @@ impl<W: Write> Grid<W> {
     }
 
     /// Draw this buffer to `term`.
-    pub fn draw(&mut self, term: &mut RawTerminal<File>) {
+    pub fn draw<T: Write>(&mut self, term: &mut T) {
         for row in self.dirty_rows.iter() {
             let start = CursorPos { row: *row, col: 0 };
             write!(

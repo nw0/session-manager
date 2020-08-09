@@ -3,7 +3,7 @@
 //! A would-be terminal multiplexer.
 #![recursion_limit = "1024"]
 
-use std::{fs::File, thread};
+use std::{fs::File, io::Write, thread};
 
 use anyhow::Result;
 use futures::{
@@ -21,7 +21,7 @@ use termion::{
     self,
     event::{Event, Key},
     input::{EventsAndRaw, TermReadEventsAndRaw},
-    raw::{IntoRawMode, RawTerminal},
+    raw::IntoRawMode,
 };
 
 use session_manager::session::Session;
@@ -77,9 +77,9 @@ fn input_to_stream(mut input_events: EventsAndRaw<File>) -> Receiver<(Event, Vec
     recv
 }
 
-async fn event_loop(
+async fn event_loop<W: Write>(
     input_events: &mut Receiver<(Event, Vec<u8>)>,
-    tty_output: &mut RawTerminal<File>,
+    tty_output: &mut W,
     mut session: Session,
 ) {
     let mut ptys_update = SelectAll::new();

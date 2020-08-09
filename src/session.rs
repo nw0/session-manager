@@ -13,7 +13,6 @@ use futures::{
 };
 use log::debug;
 use nix::pty::Winsize;
-use termion::raw::RawTerminal;
 use vte::ansi::Processor;
 
 use crate::{
@@ -115,7 +114,7 @@ impl Session {
     }
 
     /// Draw the selected `Window` to the given terminal.
-    pub fn redraw(&mut self, tty_output: &mut RawTerminal<File>) {
+    pub fn redraw<W: Write>(&mut self, tty_output: &mut W) {
         self.selected_window_mut().unwrap().grid.draw(tty_output);
     }
 

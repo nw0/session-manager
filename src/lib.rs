@@ -26,3 +26,15 @@ pub mod util {
         "/bin/sh".to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use nix::pty::Winsize;
+
+    pub const WINSZ: Winsize = Winsize {
+        ws_row: 24,
+        ws_col: 80,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+}

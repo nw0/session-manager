@@ -112,17 +112,11 @@ impl ChildPty {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests::WINSZ;
 
     use std::path::{Path, PathBuf};
 
     use futures::stream::StreamExt;
-
-    const WINSZ: Winsize = Winsize {
-        ws_row: 24,
-        ws_col: 80,
-        ws_xpixel: 0,
-        ws_ypixel: 0,
-    };
 
     #[test]
     fn open_child_pty() {
