@@ -652,15 +652,30 @@ mod tests {
     }
 
     #[test]
-    fn linefeed() {
-        let mut grid = Grid::<Sink>::new(4, 2);
-        grid.goto(0, 1);
+    fn linefeed_reverse_idx() {
+        let mut grid = Grid::<Sink>::new(8, 3);
+        grid.goto(1, 0); // row, col
+        input_str!(grid, "Hello");
+        grid.goto(2, 1);
+        input_str!(grid, "World");
         grid.linefeed();
-        assert_eq!(grid.cursor, CursorPos { col: 1, row: 1 });
-        grid.linefeed();
-        assert_eq!(grid.cursor, CursorPos { col: 1, row: 1 });
+        assert_eq!(grid.cursor, CursorPos { col: 6, row: 2 });
+        check_char!(grid, 1, 1, 'W');
         grid.reverse_index();
-        assert_eq!(grid.cursor, CursorPos { col: 1, row: 0 });
+        assert_eq!(grid.cursor, CursorPos { col: 6, row: 1 });
+        check_char!(grid, 2, 1, 'o');
+        grid.reverse_index();
+        grid.reverse_index();
+        assert_eq!(grid.cursor, CursorPos { col: 6, row: 0 });
+        check_char!(grid, 1, 1, 'e');
+        check_char!(grid, 3, 2, 'r');
+        grid.linefeed();
+        grid.linefeed();
+        assert_eq!(grid.cursor, CursorPos { col: 6, row: 2 });
+        grid.linefeed();
+        grid.linefeed();
+        check_char!(grid, 4, 0, 'l');
+        assert_eq!(grid.cursor, CursorPos { col: 6, row: 2 });
     }
 
     #[test]
