@@ -515,6 +515,7 @@ impl<W: Write> Handler<W> for Grid<W> {
             ClearMode::Below => self.cursor..CursorPos::at(0, self.height),
         };
         // TODO: only mark cleared rows
+        let div = self.width;
         self.mark_all_dirty();
         self.buffer
             .rows
@@ -523,7 +524,8 @@ impl<W: Write> Handler<W> for Grid<W> {
             .flat_map(|(ri, row)| row.buf.iter_mut().map(move |c| (ri, c)))
             .enumerate()
             .for_each(|(col, (row, cell))| {
-                if range.contains(&CursorPos::at(col as u16, row as u16)) {
+                let col = col as u16 % div;
+                if range.contains(&CursorPos::at(col, row as u16)) {
                     *cell = Cell::default();
                 }
             });
@@ -677,6 +679,56 @@ mod tests {
         check_cur!(grid, 0, 2);
         input_str!(grid, "Hello World!");
         check_cur!(grid, 0, 3); // one past end (!)
+    }
+
+    #[test]
+    fn clear_line() {
+        let mut grid = Grid::<Sink>::new(4, 3);
+        input_str!(grid, "Hello World!");
+        grid.goto(1, 2);
+        grid.clear_line(LineClearMode::Right);
+        check_char!(grid, 1, 0, 'e');
+        check_char!(grid, 1, 1, ' ');
+        check_char!(grid, 2, 2, 'd');
+        assert_eq!(grid.buffer[CursorPos::at(2, 1)], Cell::default());
+        grid.goto(0, 3);
+        grid.clear_line(LineClearMode::Left);
+        assert_eq!(grid.buffer[CursorPos::at(2, 0)], Cell::default());
+        assert_eq!(grid.buffer[CursorPos::at(0, 0)], Cell::default());
+        check_char!(grid, 3, 0, 'l');
+        check_char!(grid, 0, 1, 'o');
+        grid.goto(2, 1);
+        grid.clear_line(LineClearMode::All);
+        check_char!(grid, 3, 0, 'l');
+        check_char!(grid, 0, 1, 'o');
+        assert_eq!(grid.buffer[CursorPos::at(0, 2)], Cell::default());
+        assert_eq!(grid.buffer[CursorPos::at(1, 2)], Cell::default());
+        assert_eq!(grid.buffer[CursorPos::at(3, 2)], Cell::default());
+    }
+
+    #[test]
+    fn clear_screen() {
+        let mut grid = Grid::<Sink>::new(4, 3);
+        input_str!(grid, "Hello World!");
+        grid.goto(1, 3);
+        grid.clear_screen(ClearMode::Below);
+        check_char!(grid, 1, 0, 'e');
+        check_char!(grid, 0, 1, 'o');
+        assert_eq!(grid.buffer[CursorPos::at(3, 1)], Cell::default());
+        assert_eq!(grid.buffer[CursorPos::at(1, 2)], Cell::default());
+        check_char!(grid, 2, 1, 'W');
+        grid.goto(0, 3);
+        grid.clear_screen(ClearMode::Above);
+        assert_eq!(grid.buffer[CursorPos::at(2, 0)], Cell::default());
+        assert_eq!(grid.buffer[CursorPos::at(0, 0)], Cell::default());
+        check_char!(grid, 3, 0, 'l');
+        check_char!(grid, 0, 1, 'o');
+        grid.goto(2, 1);
+        grid.clear_screen(ClearMode::All);
+        assert_eq!(grid.buffer[CursorPos::at(2, 0)], Cell::default());
+        assert_eq!(grid.buffer[CursorPos::at(0, 0)], Cell::default());
+        assert_eq!(grid.buffer[CursorPos::at(0, 1)], Cell::default());
+        assert_eq!(grid.buffer[CursorPos::at(3, 0)], Cell::default());
     }
 
     #[test]
