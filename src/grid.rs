@@ -514,21 +514,14 @@ impl<W: Write> Handler<W> for Grid<W> {
             ClearMode::Above => CursorPos::at(0, 0)..self.cursor,
             ClearMode::Below => self.cursor..CursorPos::at(0, self.height),
         };
-        // TODO: only mark cleared rows
-        let div = self.width;
-        self.mark_all_dirty();
-        self.buffer
-            .rows
-            .iter_mut()
-            .enumerate()
-            .flat_map(|(ri, row)| row.buf.iter_mut().map(move |c| (ri, c)))
-            .enumerate()
-            .for_each(|(col, (row, cell))| {
-                let col = col as u16 % div;
-                if range.contains(&CursorPos::at(col, row as u16)) {
-                    *cell = Cell::default();
+        for row in range.start.row..=range.end.row {
+            for col in 0..self.width {
+                let pos = CursorPos::at(col, row as u16);
+                if range.contains(&pos) {
+                    *self.cell_at_mut(pos) = Cell::default();
                 }
-            });
+            }
+        }
     }
 
     fn clear_tabs(&mut self, _mode: TabulationClearMode) {
