@@ -637,18 +637,24 @@ mod tests {
     macro_rules! check_char {
         ($grid:expr, $col:expr, $row:expr, $char:expr) => {
             assert_eq!($grid.buffer[CursorPos::at($col, $row)].c, $char)
-        }
+        };
+    }
+
+    macro_rules! check_cur {
+        ($grid:expr, $col:expr, $row:expr) => {
+            assert_eq!($grid.cursor, CursorPos::at($col, $row))
+        };
     }
 
     #[test]
     fn goto() {
         let mut grid = Grid::<Sink>::new(4, 4);
         grid.goto(1, 1);
-        assert_eq!(grid.cursor, CursorPos { col: 1, row: 1 });
+        check_cur!(grid, 1, 1);
         grid.move_up_and_cr(1);
-        assert_eq!(grid.cursor, CursorPos { col: 0, row: 0 });
+        check_cur!(grid, 0, 0);
         grid.move_down(6);
-        assert_eq!(grid.cursor, CursorPos { col: 0, row: 3 });
+        check_cur!(grid, 0, 3);
     }
 
     #[test]
@@ -659,23 +665,23 @@ mod tests {
         grid.goto(2, 1);
         input_str!(grid, "World");
         grid.linefeed();
-        assert_eq!(grid.cursor, CursorPos { col: 6, row: 2 });
+        check_cur!(grid, 6, 2);
         check_char!(grid, 1, 1, 'W');
         grid.reverse_index();
-        assert_eq!(grid.cursor, CursorPos { col: 6, row: 1 });
+        check_cur!(grid, 6, 1);
         check_char!(grid, 2, 1, 'o');
         grid.reverse_index();
         grid.reverse_index();
-        assert_eq!(grid.cursor, CursorPos { col: 6, row: 0 });
+        check_cur!(grid, 6, 0);
         check_char!(grid, 1, 1, 'e');
         check_char!(grid, 3, 2, 'r');
         grid.linefeed();
         grid.linefeed();
-        assert_eq!(grid.cursor, CursorPos { col: 6, row: 2 });
+        check_cur!(grid, 6, 2);
         grid.linefeed();
         grid.linefeed();
         check_char!(grid, 4, 0, 'l');
-        assert_eq!(grid.cursor, CursorPos { col: 6, row: 2 });
+        check_cur!(grid, 6, 2);
     }
 
     #[test]
@@ -732,17 +738,17 @@ mod tests {
         check_char!(grid, 0, 0, 'H');
         check_char!(grid, 2, 1, 'W');
         check_char!(grid, 0, 2, 'r');
-        assert_eq!(grid.cursor, CursorPos::at(3, 2));
+        check_cur!(grid, 3, 2);
         grid.resize(4, 3);
         check_char!(grid, 0, 0, 'H');
         check_char!(grid, 2, 1, 'W');
         check_char!(grid, 0, 2, 'r');
-        assert_eq!(grid.cursor, CursorPos::at(3, 2));
+        check_cur!(grid, 3, 2);
         grid.resize(4, 2);
         check_char!(grid, 0, 0, 'o');
         check_char!(grid, 1, 0, ' ');
         check_char!(grid, 1, 1, 'l');
-        assert_eq!(grid.cursor, CursorPos::at(3, 1));
+        check_cur!(grid, 3, 1);
         assert_eq!(grid.height, 2);
     }
 
@@ -754,20 +760,17 @@ mod tests {
         check_char!(grid, 0, 0, 'H');
         check_char!(grid, 2, 1, 'W');
         check_char!(grid, 0, 2, 'r');
-        assert_eq!(grid.cursor, CursorPos::at(0, 3));
+        check_cur!(grid, 0, 3);
         grid.resize(4, 3);
         check_char!(grid, 0, 0, 'H');
         check_char!(grid, 2, 1, 'W');
         check_char!(grid, 0, 2, 'r');
-        assert_eq!(grid.cursor.row, 3);
-        assert_eq!(grid.cursor, CursorPos::at(0, 3));
+        check_cur!(grid, 0, 3);
         grid.resize(4, 2);
         check_char!(grid, 0, 0, 'o');
         check_char!(grid, 1, 0, ' ');
         check_char!(grid, 1, 1, 'l');
-        assert_eq!(grid.cursor, CursorPos::at(0, 2));
+        check_cur!(grid, 0, 2);
         assert_eq!(grid.height, 2);
     }
-
-    // TODO: test input/draw
 }
