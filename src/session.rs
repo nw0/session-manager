@@ -224,23 +224,39 @@ impl SessionWindow for Window {
 mod tests {
     use super::*;
 
-    use futures::channel::mpsc;
+    use futures::channel::mpsc::{self, Sender};
 
-    pub struct MockWindow;
+    pub struct MockWindow {
+        pty_channel: (Sender<u8>, Receiver<u8>),
+        resize_channel: (Sender<Winsize>, Receiver<Winsize>),
+    }
 
     impl SessionWindow for MockWindow {
         fn new(_: &str, _: Winsize) -> Result<(MockWindow, Receiver<PtyUpdate>), ()> {
             let (_, recv) = mpsc::channel(10);
-            Ok((MockWindow {}, recv))
+            let pty_channel = mpsc::channel(10);
+            let resize_channel = mpsc::channel(10);
+            Ok((
+                MockWindow {
+                    pty_channel,
+                    resize_channel,
+                },
+                recv,
+            ))
         }
 
         fn receive_stdin(&self, _: &[u8]) -> Result<(), io::Error> {
             Ok(())
         }
 
-        fn pty_update(&mut self, _: u8) {}
+        fn pty_update(&mut self, byte: u8) {
+            self.pty_channel.0.try_send(byte).unwrap();
+        }
 
-        fn resize(&mut self, _: Winsize) {}
+        fn resize(&mut self, size: Winsize) {
+            log::debug!("received resize");
+            self.resize_channel.0.try_send(size).unwrap();
+        }
 
         fn redraw<T: Write>(&mut self, _: &mut T) {}
     }
@@ -335,5 +351,75 @@ mod tests {
             session.selected_window_idx(),
             "closed window not deselected"
         );
+    }
+
+    #[test]
+    fn session_forward_pty_update() {
+        let mut session: Session<MockWindow> = Session::new();
+        let (first, _) = session.new_window().unwrap();
+        let (second, _) = session.new_window().unwrap();
+        session.select_window(second);
+        assert_eq!(session.selected_window_idx(), Some(second));
+        session.pty_update(SessionPtyUpdate {
+            window_idx: first,
+            data: PtyUpdate::Byte(13),
+        });
+
+        let recv = &mut session.windows.get_mut(&second).unwrap().pty_channel.1;
+        assert!(recv.try_next().is_err(), "other window received byte");
+        let recv = &mut session.windows.get_mut(&first).unwrap().pty_channel.1;
+        assert_eq!(recv.try_next().unwrap(), Some(13u8), "failed to recv byte");
+        assert!(recv.try_next().is_err(), "recv multiple bytes");
+    }
+
+    #[test]
+    fn session_resize() {
+        let mut session: Session<MockWindow> = Session::new();
+        let (first, _) = session.new_window().unwrap();
+        let (second, _) = session.new_window().unwrap();
+        let (third, _) = session.new_window().unwrap();
+        session.select_window(second);
+        assert_eq!(session.selected_window_idx(), Some(second));
+        let recv = &mut session.windows.get_mut(&second).unwrap().resize_channel.1;
+        assert!(recv.try_next().is_ok(), "did not resize selected window");
+        assert!(
+            recv.try_next().is_err(),
+            "resized multiple times on selection"
+        );
+
+        session.resize();
+        let recv = &mut session.windows.get_mut(&first).unwrap().resize_channel.1;
+        assert!(recv.try_next().is_err(), "resized background window");
+        let recv = &mut session.windows.get_mut(&second).unwrap().resize_channel.1;
+        assert!(recv.try_next().is_ok(), "did not resize selected window");
+        assert!(
+            recv.try_next().is_err(),
+            "resized multiple times on selection"
+        );
+        let recv = &mut session.windows.get_mut(&third).unwrap().resize_channel.1;
+        assert!(recv.try_next().is_err(), "resized background window");
+
+        // some noise
+        session.pty_update(SessionPtyUpdate {
+            window_idx: first,
+            data: PtyUpdate::Byte(13),
+        });
+
+        session.select_window(third);
+        let recv = &mut session.windows.get_mut(&first).unwrap().resize_channel.1;
+        assert!(recv.try_next().is_err(), "resized background window");
+        let recv = &mut session.windows.get_mut(&second).unwrap().resize_channel.1;
+        assert!(recv.try_next().is_err(), "resized on exit");
+        let recv = &mut session.windows.get_mut(&third).unwrap().resize_channel.1;
+        assert!(recv.try_next().is_ok(), "did not resize selected window");
+
+        session.pty_update(SessionPtyUpdate {
+            window_idx: third,
+            data: PtyUpdate::Exited,
+        });
+        let recv = &mut session.windows.get_mut(&first).unwrap().resize_channel.1;
+        assert!(recv.try_next().is_err(), "resized background window");
+        let recv = &mut session.windows.get_mut(&second).unwrap().resize_channel.1;
+        assert!(recv.try_next().is_ok(), "did not resize on selection");
     }
 }
