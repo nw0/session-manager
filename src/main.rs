@@ -24,7 +24,10 @@ use termion::{
     raw::IntoRawMode,
 };
 
-use session_manager::session::{Session, Window};
+use session_manager::{
+    session::{Session, Window},
+    util,
+};
 
 const PREFIX: Event = Event::Key(Key::Ctrl('b'));
 
@@ -47,7 +50,7 @@ fn main() -> Result<()> {
     let input_events = tty_output.try_clone()?.events_and_raw();
     let mut input_stream = input_to_stream(input_events);
 
-    let session = Session::new();
+    let session = Session::new(util::get_term_size().unwrap());
 
     executor::block_on(event_loop(&mut input_stream, &mut tty_output, session));
 
@@ -139,7 +142,7 @@ async fn event_loop<W: Write>(
                 session.redraw(tty_output);
             }
             _ = sigwinch_stream.next() => {
-                session.resize();
+                session.resize(util::get_term_size().unwrap());
                 session.redraw(tty_output);
             }
         }

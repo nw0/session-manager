@@ -31,12 +31,12 @@ pub struct Session<W: SessionWindow> {
 
 impl<W: SessionWindow> Session<W> {
     /// Construct a new `Session`.
-    pub fn new() -> Session<W> {
+    pub fn new(size: Winsize) -> Session<W> {
         Session {
             next_window: 0,
             selected_window: None,
             windows: BTreeMap::new(),
-            size: util::get_term_size().unwrap(),
+            size,
         }
     }
 
@@ -139,10 +139,9 @@ impl<W: SessionWindow> Session<W> {
     ///
     /// Strategy: resize the active `Window`, and resize other `Window`s when they are
     /// selected.
-    pub fn resize(&mut self) {
-        let sz = util::get_term_size().unwrap();
-        self.size = sz;
-        self.selected_window_mut().unwrap().resize(sz);
+    pub fn resize(&mut self, size: Winsize) {
+        self.size = size;
+        self.selected_window_mut().unwrap().resize(size);
     }
 }
 
@@ -223,6 +222,7 @@ impl SessionWindow for Window {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests::WINSZ;
 
     use futures::channel::mpsc::{self, Sender};
 
@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn session_window_relative() {
-        let mut session: Session<MockWindow> = Session::new();
+        let mut session: Session<MockWindow> = Session::new(WINSZ);
         assert_eq!(session.windows.len(), 0);
 
         let (first, _) = session.new_window().unwrap();
@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn session_forward_pty_update() {
-        let mut session: Session<MockWindow> = Session::new();
+        let mut session: Session<MockWindow> = Session::new(WINSZ);
         let (first, _) = session.new_window().unwrap();
         let (second, _) = session.new_window().unwrap();
         session.select_window(second);
@@ -374,7 +374,7 @@ mod tests {
 
     #[test]
     fn session_resize() {
-        let mut session: Session<MockWindow> = Session::new();
+        let mut session: Session<MockWindow> = Session::new(WINSZ);
         let (first, _) = session.new_window().unwrap();
         let (second, _) = session.new_window().unwrap();
         let (third, _) = session.new_window().unwrap();
@@ -387,7 +387,7 @@ mod tests {
             "resized multiple times on selection"
         );
 
-        session.resize();
+        session.resize(WINSZ);
         let recv = &mut session.windows.get_mut(&first).unwrap().resize_channel.1;
         assert!(recv.try_next().is_err(), "resized background window");
         let recv = &mut session.windows.get_mut(&second).unwrap().resize_channel.1;
