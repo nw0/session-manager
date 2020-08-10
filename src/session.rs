@@ -75,6 +75,10 @@ impl<W: SessionWindow> Session<W> {
         }
     }
 
+    pub fn selected_window_idx(&self) -> Option<usize> {
+        self.selected_window
+    }
+
     /// Get index of next oldest window.
     pub fn next_window_idx(&self) -> Option<usize> {
         self.windows
@@ -117,9 +121,12 @@ impl<W: SessionWindow> Session<W> {
             PtyUpdate::Exited => {
                 debug!("removed window {}", update.window_idx);
                 self.windows.remove(&update.window_idx);
-                self.next_window_idx()
-                    .or(self.last_window_idx())
-                    .map(|idx| self.select_window(idx));
+                match self.next_window_idx().or(self.last_window_idx()) {
+                    Some(idx) => {
+                        self.select_window(idx);
+                    }
+                    None => self.selected_window = None,
+                }
             }
             PtyUpdate::Byte(byte) => {
                 let window = self.windows.get_mut(&update.window_idx).unwrap();
