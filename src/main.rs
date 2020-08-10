@@ -18,14 +18,15 @@ use log4rs::{
 };
 use signal_hook::{iterator::Signals, SIGWINCH};
 use termion::{
-    self,
+    self, clear,
+    cursor::Goto,
     event::{Event, Key},
     input::{EventsAndRaw, TermReadEventsAndRaw},
     raw::IntoRawMode,
 };
 
 use session_manager::{
-    session::{Session, Window},
+    session::{Session, SessionError, Window},
     util,
 };
 
@@ -139,7 +140,17 @@ async fn event_loop<W: Write>(
                     return;
                 }
                 session.pty_update(pty_update.unwrap()).unwrap();
-                session.redraw(tty_output).unwrap();
+                match session.redraw(tty_output) {
+                    Ok(_) => (),
+                    Err(SessionError::NoSelectedWindow) => {
+                        write!(tty_output,
+                               "{}{}sm: last window closed. Exiting.\r\n",
+                               Goto(1, 1),
+                               clear::All
+                        ).unwrap();
+                    }
+                    _ => panic!("unhandled redraw error")
+                }
             }
             _ = sigwinch_stream.next() => {
                 session.resize(util::get_term_size().unwrap()).unwrap();

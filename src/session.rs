@@ -285,6 +285,15 @@ mod tests {
     }
 
     #[test]
+    fn session_report_unselected() {
+        let mut session: Session<MockWindow> = Session::new(WINSZ);
+        match session.redraw(&mut io::sink()).unwrap_err() {
+            SessionError::NoSelectedWindow => (),
+            _ => assert!(false, "wrong error when redrawing nonexistent window"),
+        };
+    }
+
+    #[test]
     fn session_window_relative() {
         let mut session: Session<MockWindow> = Session::new(WINSZ);
         assert_eq!(session.windows.len(), 0);
