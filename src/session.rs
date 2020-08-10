@@ -26,7 +26,6 @@ pub struct Session {
     next_window: usize,
     selected_window: Option<usize>,
     windows: BTreeMap<usize, Window>,
-    processors: Vec<Processor>,
     size: Winsize,
 }
 
@@ -37,7 +36,6 @@ impl Session {
             next_window: 0,
             selected_window: None,
             windows: BTreeMap::new(),
-            processors: Vec::new(),
             size: util::get_term_size().unwrap(),
         }
     }
@@ -49,7 +47,6 @@ impl Session {
         let window_idx = self.next_window;
         let (child, update) = Window::new(&util::get_shell(), self.size).unwrap();
         self.windows.insert(window_idx, child);
-        self.processors.push(Processor::new());
         self.next_window += 1;
         Ok((
             window_idx,
@@ -72,7 +69,6 @@ impl Session {
                 let sz = self.size;
                 let window = self.selected_window_mut().unwrap();
                 window.resize(sz);
-                window.grid.mark_all_dirty();
                 Some(idx)
             }
             None => None,
@@ -107,15 +103,12 @@ impl Session {
 
     /// Receive stdin for the active `Window`.
     pub fn receive_stdin(&self, data: &[u8]) -> Result<(), io::Error> {
-        let mut file = self.selected_window().unwrap().get_file();
-        file.write(data)?;
-        file.flush()?;
-        Ok(())
+        self.selected_window().unwrap().receive_stdin(data)
     }
 
     /// Draw the selected `Window` to the given terminal.
     pub fn redraw<W: Write>(&mut self, tty_output: &mut W) {
-        self.selected_window_mut().unwrap().grid.draw(tty_output);
+        self.selected_window_mut().unwrap().redraw(tty_output);
     }
 
     /// Update grid with PTY output.
@@ -130,12 +123,7 @@ impl Session {
             }
             PtyUpdate::Byte(byte) => {
                 let window = self.windows.get_mut(&update.window_idx).unwrap();
-                let mut reply = window.get_file().try_clone().unwrap();
-                self.processors.get_mut(update.window_idx).unwrap().advance(
-                    &mut window.grid,
-                    byte,
-                    &mut reply,
-                );
+                window.pty_update(byte);
             }
         }
     }
@@ -163,8 +151,9 @@ pub struct SessionPtyUpdate {
 /// underlying terminal implementation and frame, whereas `Window` acts as the
 /// interface between the multiplexer and the `Console`.
 pub struct Window {
-    pub pty: ChildPty,
-    pub grid: Grid<File>,
+    pty: ChildPty,
+    grid: Grid<File>,
+    processor: Processor,
     size: Winsize,
 }
 
@@ -175,11 +164,27 @@ impl Window {
     ) -> Result<(Window, Receiver<PtyUpdate>), ()> {
         let args: [&str; 0] = [];
         let (pty, grid, pty_update) = console::spawn_pty(command, &args, size)?;
-        Ok((Window { pty, grid, size }, pty_update))
+        Ok((
+            Window {
+                pty,
+                grid,
+                processor: Processor::new(),
+                size,
+            },
+            pty_update,
+        ))
     }
 
-    pub fn get_file(&self) -> &File {
-        &self.pty.file
+    pub fn receive_stdin(&self, data: &[u8]) -> Result<(), io::Error> {
+        let mut file = &self.pty.file;
+        file.write(data)?;
+        file.flush()?;
+        Ok(())
+    }
+
+    pub fn pty_update(&mut self, byte: u8) {
+        let mut reply = self.pty.file.try_clone().unwrap();
+        self.processor.advance(&mut self.grid, byte, &mut reply);
     }
 
     pub fn resize(&mut self, sz: Winsize) {
@@ -187,6 +192,11 @@ impl Window {
             self.size = sz;
             self.grid.resize(sz.ws_col, sz.ws_row);
             self.pty.resize(sz).unwrap();
+            self.grid.mark_all_dirty();
         }
+    }
+
+    pub fn redraw<W: Write>(&mut self, tty_output: &mut W) {
+        self.grid.draw(tty_output);
     }
 }
