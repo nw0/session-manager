@@ -24,7 +24,7 @@ use termion::{
     raw::IntoRawMode,
 };
 
-use session_manager::session::Session;
+use session_manager::session::{Session, Window};
 
 const PREFIX: Event = Event::Key(Key::Ctrl('b'));
 
@@ -80,7 +80,7 @@ fn input_to_stream(mut input_events: EventsAndRaw<File>) -> Receiver<(Event, Vec
 async fn event_loop<W: Write>(
     input_events: &mut Receiver<(Event, Vec<u8>)>,
     tty_output: &mut W,
-    mut session: Session,
+    mut session: Session<Window>,
 ) {
     let mut ptys_update = SelectAll::new();
     let (idx, window) = session.new_window().unwrap();

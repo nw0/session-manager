@@ -22,16 +22,16 @@ use crate::{
 };
 
 /// A collection of `Window`s.
-pub struct Session {
+pub struct Session<W: SessionWindow> {
     next_window: usize,
     selected_window: Option<usize>,
-    windows: BTreeMap<usize, Window>,
+    windows: BTreeMap<usize, W>,
     size: Winsize,
 }
 
-impl Session {
+impl<W: SessionWindow> Session<W> {
     /// Construct a new `Session`.
-    pub fn new() -> Session {
+    pub fn new() -> Session<W> {
         Session {
             next_window: 0,
             selected_window: None,
@@ -45,7 +45,7 @@ impl Session {
         &mut self,
     ) -> Result<(usize, impl Stream<Item = SessionPtyUpdate>)> {
         let window_idx = self.next_window;
-        let (child, update) = Window::new(&util::get_shell(), self.size).unwrap();
+        let (child, update) = W::new(&util::get_shell(), self.size).unwrap();
         self.windows.insert(window_idx, child);
         self.next_window += 1;
         Ok((
@@ -54,11 +54,11 @@ impl Session {
         ))
     }
 
-    fn selected_window(&self) -> Option<&Window> {
+    fn selected_window(&self) -> Option<&W> {
         self.windows.get(&self.selected_window.unwrap())
     }
 
-    fn selected_window_mut(&mut self) -> Option<&mut Window> {
+    fn selected_window_mut(&mut self) -> Option<&mut W> {
         self.windows.get_mut(&self.selected_window.unwrap())
     }
 
@@ -107,7 +107,7 @@ impl Session {
     }
 
     /// Draw the selected `Window` to the given terminal.
-    pub fn redraw<W: Write>(&mut self, tty_output: &mut W) {
+    pub fn redraw<T: Write>(&mut self, tty_output: &mut T) {
         self.selected_window_mut().unwrap().redraw(tty_output);
     }
 
@@ -145,6 +145,21 @@ pub struct SessionPtyUpdate {
     data: PtyUpdate,
 }
 
+/// A Window object for a `Session`.
+///
+/// This trait exists to allow `Session` to handle different types of `Window`,
+/// which is useful for testing.
+pub trait SessionWindow
+where
+    Self: Sized,
+{
+    fn new(command: &str, size: Winsize) -> Result<(Self, Receiver<PtyUpdate>), ()>;
+    fn receive_stdin(&self, data: &[u8]) -> Result<(), io::Error>;
+    fn pty_update(&mut self, byte: u8);
+    fn resize(&mut self, sz: Winsize);
+    fn redraw<T: Write>(&mut self, output: &mut T);
+}
+
 /// Window: a `Console` abstraction.
 ///
 /// This structure exists so that `Console` can be only concerned with the
@@ -157,11 +172,8 @@ pub struct Window {
     size: Winsize,
 }
 
-impl Window {
-    pub fn new(
-        command: &str,
-        size: Winsize,
-    ) -> Result<(Window, Receiver<PtyUpdate>), ()> {
+impl SessionWindow for Window {
+    fn new(command: &str, size: Winsize) -> Result<(Window, Receiver<PtyUpdate>), ()> {
         let args: [&str; 0] = [];
         let (pty, grid, pty_update) = console::spawn_pty(command, &args, size)?;
         Ok((
@@ -175,19 +187,19 @@ impl Window {
         ))
     }
 
-    pub fn receive_stdin(&self, data: &[u8]) -> Result<(), io::Error> {
+    fn receive_stdin(&self, data: &[u8]) -> Result<(), io::Error> {
         let mut file = &self.pty.file;
         file.write(data)?;
         file.flush()?;
         Ok(())
     }
 
-    pub fn pty_update(&mut self, byte: u8) {
+    fn pty_update(&mut self, byte: u8) {
         let mut reply = self.pty.file.try_clone().unwrap();
         self.processor.advance(&mut self.grid, byte, &mut reply);
     }
 
-    pub fn resize(&mut self, sz: Winsize) {
+    fn resize(&mut self, sz: Winsize) {
         if sz != self.size {
             self.size = sz;
             self.grid.resize(sz.ws_col, sz.ws_row);
@@ -196,7 +208,7 @@ impl Window {
         }
     }
 
-    pub fn redraw<W: Write>(&mut self, tty_output: &mut W) {
-        self.grid.draw(tty_output);
+    fn redraw<T: Write>(&mut self, output: &mut T) {
+        self.grid.draw(output);
     }
 }
