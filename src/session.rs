@@ -219,3 +219,121 @@ impl SessionWindow for Window {
         self.grid.draw(output);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use futures::channel::mpsc;
+
+    pub struct MockWindow;
+
+    impl SessionWindow for MockWindow {
+        fn new(_: &str, _: Winsize) -> Result<(MockWindow, Receiver<PtyUpdate>), ()> {
+            let (_, recv) = mpsc::channel(10);
+            Ok((MockWindow {}, recv))
+        }
+
+        fn receive_stdin(&self, _: &[u8]) -> Result<(), io::Error> {
+            Ok(())
+        }
+
+        fn pty_update(&mut self, _: u8) {}
+
+        fn resize(&mut self, _: Winsize) {}
+
+        fn redraw<T: Write>(&mut self, _: &mut T) {}
+    }
+
+    #[test]
+    fn session_window_relative() {
+        let mut session: Session<MockWindow> = Session::new();
+        assert_eq!(session.windows.len(), 0);
+
+        let (first, _) = session.new_window().unwrap();
+        assert_eq!(session.windows.len(), 1);
+        session.select_window(first);
+        let first = session.first_window_idx().unwrap();
+        assert_eq!(
+            session.select_window(2475),
+            None,
+            "should not select invalid idx"
+        );
+        assert_eq!(Some(first), session.selected_window_idx());
+        assert_eq!(Some(first), session.first_window_idx());
+        assert_eq!(Some(first), session.last_window_idx());
+        assert_eq!(session.next_window_idx(), None);
+        assert_eq!(session.prev_window_idx(), None);
+
+        let (second, _) = session.new_window().unwrap();
+        assert_eq!(session.windows.len(), 2);
+        assert_ne!(first, second);
+        assert_eq!(
+            Some(first),
+            session.selected_window_idx(),
+            "selection changed when adding new window"
+        );
+        session.select_window(second);
+        assert_eq!(Some(first), session.first_window_idx(), "ordering broken");
+        assert_eq!(Some(second), session.last_window_idx(), "ordering broken");
+        assert_eq!(
+            Some(first),
+            session.prev_window_idx(),
+            "can't find first window"
+        );
+        assert_eq!(session.next_window_idx(), None);
+
+        session.select_window(first);
+        let (third, _) = session.new_window().unwrap();
+        assert_eq!(session.windows.len(), 3);
+        assert_eq!(Some(second), session.next_window_idx());
+        assert_eq!(Some(third), session.last_window_idx());
+        session.select_window(second);
+        assert_eq!(Some(first), session.prev_window_idx());
+        assert_eq!(Some(third), session.next_window_idx());
+        assert_eq!(Some(first), session.first_window_idx());
+        session.select_window(third);
+        assert_eq!(Some(second), session.prev_window_idx());
+        assert_eq!(None, session.next_window_idx());
+
+        session.select_window(second);
+        session.pty_update(SessionPtyUpdate {
+            window_idx: second,
+            data: PtyUpdate::Exited,
+        });
+        assert_eq!(
+            Some(third),
+            session.selected_window_idx(),
+            "next younger window not selected"
+        );
+        assert_eq!(
+            Some(first),
+            session.prev_window_idx(),
+            "can't find first window"
+        );
+        session.pty_update(SessionPtyUpdate {
+            window_idx: first,
+            data: PtyUpdate::Exited,
+        });
+        assert_eq!(Some(third), session.selected_window_idx());
+        assert_eq!(
+            Some(third),
+            session.first_window_idx(),
+            "only remaining window is not first"
+        );
+        assert_eq!(Some(third), session.last_window_idx());
+        assert_eq!(None, session.prev_window_idx());
+        session.pty_update(SessionPtyUpdate {
+            window_idx: third,
+            data: PtyUpdate::Exited,
+        });
+        assert_eq!(session.windows.len(), 0);
+        assert_eq!(None, session.next_window_idx());
+        assert_eq!(None, session.last_window_idx());
+        assert_eq!(
+            None,
+            session.selected_window_idx(),
+            "closed window not deselected"
+        );
+    }
+}
