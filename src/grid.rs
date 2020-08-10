@@ -167,10 +167,8 @@ impl<W: Write> Grid<W> {
             self.scrolling_region.end = min(self.scrolling_region.end, new_height);
             self.saved_cursor.row = min(self.saved_cursor.row, new_height - 1);
         }
-        if self.height < new_height {
-            if self.scrolling_region.end == self.height {
-                self.scrolling_region.end = new_height;
-            }
+        if self.height < new_height && self.scrolling_region.end == self.height {
+            self.scrolling_region.end = new_height;
         }
         self.height = new_height;
         self.buffer

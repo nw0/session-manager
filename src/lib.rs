@@ -8,7 +8,6 @@ pub mod util {
     use std::io;
 
     use nix::pty::Winsize;
-    use termion;
 
     pub fn get_term_size() -> io::Result<Winsize> {
         let (cols, rows) = termion::terminal_size()?;

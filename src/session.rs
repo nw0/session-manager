@@ -97,12 +97,12 @@ impl<W: SessionWindow> Session<W> {
 
     /// Get index of oldest window.
     pub fn first_window_idx(&self) -> Option<usize> {
-        self.windows.keys().next().map(|idx| *idx)
+        self.windows.keys().next().copied()
     }
 
     /// Get index of youngest window.
     pub fn last_window_idx(&self) -> Option<usize> {
-        self.windows.keys().rev().next().map(|idx| *idx)
+        self.windows.keys().rev().next().copied()
     }
 
     /// Receive stdin for the active `Window`.
@@ -121,7 +121,7 @@ impl<W: SessionWindow> Session<W> {
             PtyUpdate::Exited => {
                 debug!("removed window {}", update.window_idx);
                 self.windows.remove(&update.window_idx);
-                match self.next_window_idx().or(self.last_window_idx()) {
+                match self.next_window_idx().or_else(|| self.last_window_idx()) {
                     Some(idx) => {
                         self.select_window(idx);
                     }
@@ -195,7 +195,7 @@ impl SessionWindow for Window {
 
     fn receive_stdin(&self, data: &[u8]) -> Result<(), io::Error> {
         let mut file = &self.pty.file;
-        file.write(data)?;
+        file.write_all(data)?;
         file.flush()?;
         Ok(())
     }
