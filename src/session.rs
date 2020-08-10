@@ -13,6 +13,7 @@ use futures::{
 };
 use log::debug;
 use nix::pty::Winsize;
+use thiserror::Error;
 use vte::ansi::Processor;
 
 use crate::{
@@ -54,12 +55,16 @@ impl<W: SessionWindow> Session<W> {
         ))
     }
 
-    fn selected_window(&self) -> Option<&W> {
-        self.windows.get(&self.selected_window.unwrap())
+    fn selected_window(&self) -> Result<&W, SessionError> {
+        self.selected_window
+            .ok_or(SessionError::NoSelectedWindow)
+            .and_then(move |idx| self.windows.get(&idx).ok_or(SessionError::WindowLost))
     }
 
-    fn selected_window_mut(&mut self) -> Option<&mut W> {
-        self.windows.get_mut(&self.selected_window.unwrap())
+    fn selected_window_mut(&mut self) -> Result<&mut W, SessionError> {
+        self.selected_window
+            .and_then(move |idx| self.windows.get_mut(&idx))
+            .ok_or(SessionError::NoSelectedWindow)
     }
 
     pub fn select_window(&mut self, idx: usize) -> Option<usize> {
@@ -67,7 +72,7 @@ impl<W: SessionWindow> Session<W> {
             Some(_) => {
                 self.selected_window = Some(idx);
                 let sz = self.size;
-                let window = self.selected_window_mut().unwrap();
+                let window = self.selected_window_mut().expect("existed during match");
                 window.resize(sz);
                 Some(idx)
             }
@@ -106,21 +111,24 @@ impl<W: SessionWindow> Session<W> {
     }
 
     /// Receive stdin for the active `Window`.
-    pub fn receive_stdin(&self, data: &[u8]) -> Result<(), io::Error> {
-        self.selected_window().unwrap().receive_stdin(data)
+    pub fn receive_stdin(&self, data: &[u8]) -> Result<(), SessionError> {
+        Ok(self.selected_window()?.receive_stdin(data)?)
     }
 
     /// Draw the selected `Window` to the given terminal.
-    pub fn redraw<T: Write>(&mut self, tty_output: &mut T) {
-        self.selected_window_mut().unwrap().redraw(tty_output);
+    pub fn redraw<T: Write>(&mut self, output: &mut T) -> Result<(), SessionError> {
+        self.selected_window_mut()?.redraw(output);
+        Ok(())
     }
 
     /// Update grid with PTY output.
-    pub fn pty_update(&mut self, update: SessionPtyUpdate) {
+    pub fn pty_update(&mut self, update: SessionPtyUpdate) -> Result<(), SessionError> {
         match update.data {
             PtyUpdate::Exited => {
                 debug!("removed window {}", update.window_idx);
-                self.windows.remove(&update.window_idx);
+                self.windows
+                    .remove(&update.window_idx)
+                    .ok_or(SessionError::WindowLost)?;
                 match self.next_window_idx().or_else(|| self.last_window_idx()) {
                     Some(idx) => {
                         self.select_window(idx);
@@ -129,20 +137,35 @@ impl<W: SessionWindow> Session<W> {
                 }
             }
             PtyUpdate::Byte(byte) => {
-                let window = self.windows.get_mut(&update.window_idx).unwrap();
+                let window = self
+                    .windows
+                    .get_mut(&update.window_idx)
+                    .ok_or(SessionError::WindowLost)?;
                 window.pty_update(byte);
             }
         }
+        Ok(())
     }
 
     /// Resize this session.
     ///
     /// Strategy: resize the active `Window`, and resize other `Window`s when they are
     /// selected.
-    pub fn resize(&mut self, size: Winsize) {
+    pub fn resize(&mut self, size: Winsize) -> Result<(), SessionError> {
         self.size = size;
-        self.selected_window_mut().unwrap().resize(size);
+        self.selected_window_mut()?.resize(size);
+        Ok(())
     }
+}
+
+#[derive(Error, Debug)]
+pub enum SessionError {
+    #[error(transparent)]
+    Io(#[from] io::Error),
+    #[error("no selected window")]
+    NoSelectedWindow,
+    #[error("attempted to select missing window")]
+    WindowLost,
 }
 
 /// Session-specific PTY update tuple.
@@ -313,10 +336,12 @@ mod tests {
         assert_eq!(None, session.next_window_idx());
 
         session.select_window(second);
-        session.pty_update(SessionPtyUpdate {
-            window_idx: second,
-            data: PtyUpdate::Exited,
-        });
+        session
+            .pty_update(SessionPtyUpdate {
+                window_idx: second,
+                data: PtyUpdate::Exited,
+            })
+            .unwrap();
         assert_eq!(
             Some(third),
             session.selected_window_idx(),
@@ -327,10 +352,12 @@ mod tests {
             session.prev_window_idx(),
             "can't find first window"
         );
-        session.pty_update(SessionPtyUpdate {
-            window_idx: first,
-            data: PtyUpdate::Exited,
-        });
+        session
+            .pty_update(SessionPtyUpdate {
+                window_idx: first,
+                data: PtyUpdate::Exited,
+            })
+            .unwrap();
         assert_eq!(Some(third), session.selected_window_idx());
         assert_eq!(
             Some(third),
@@ -339,10 +366,12 @@ mod tests {
         );
         assert_eq!(Some(third), session.last_window_idx());
         assert_eq!(None, session.prev_window_idx());
-        session.pty_update(SessionPtyUpdate {
-            window_idx: third,
-            data: PtyUpdate::Exited,
-        });
+        session
+            .pty_update(SessionPtyUpdate {
+                window_idx: third,
+                data: PtyUpdate::Exited,
+            })
+            .unwrap();
         assert_eq!(session.windows.len(), 0);
         assert_eq!(None, session.next_window_idx());
         assert_eq!(None, session.last_window_idx());
@@ -360,10 +389,12 @@ mod tests {
         let (second, _) = session.new_window().unwrap();
         session.select_window(second);
         assert_eq!(session.selected_window_idx(), Some(second));
-        session.pty_update(SessionPtyUpdate {
-            window_idx: first,
-            data: PtyUpdate::Byte(13),
-        });
+        session
+            .pty_update(SessionPtyUpdate {
+                window_idx: first,
+                data: PtyUpdate::Byte(13),
+            })
+            .unwrap();
 
         let recv = &mut session.windows.get_mut(&second).unwrap().pty_channel.1;
         assert!(recv.try_next().is_err(), "other window received byte");
@@ -387,7 +418,7 @@ mod tests {
             "resized multiple times on selection"
         );
 
-        session.resize(WINSZ);
+        session.resize(WINSZ).unwrap();
         let recv = &mut session.windows.get_mut(&first).unwrap().resize_channel.1;
         assert!(recv.try_next().is_err(), "resized background window");
         let recv = &mut session.windows.get_mut(&second).unwrap().resize_channel.1;
@@ -400,10 +431,12 @@ mod tests {
         assert!(recv.try_next().is_err(), "resized background window");
 
         // some noise
-        session.pty_update(SessionPtyUpdate {
-            window_idx: first,
-            data: PtyUpdate::Byte(13),
-        });
+        session
+            .pty_update(SessionPtyUpdate {
+                window_idx: first,
+                data: PtyUpdate::Byte(13),
+            })
+            .unwrap();
 
         session.select_window(third);
         let recv = &mut session.windows.get_mut(&first).unwrap().resize_channel.1;
@@ -413,10 +446,12 @@ mod tests {
         let recv = &mut session.windows.get_mut(&third).unwrap().resize_channel.1;
         assert!(recv.try_next().is_ok(), "did not resize selected window");
 
-        session.pty_update(SessionPtyUpdate {
-            window_idx: third,
-            data: PtyUpdate::Exited,
-        });
+        session
+            .pty_update(SessionPtyUpdate {
+                window_idx: third,
+                data: PtyUpdate::Exited,
+            })
+            .unwrap();
         let recv = &mut session.windows.get_mut(&first).unwrap().resize_channel.1;
         assert!(recv.try_next().is_err(), "resized background window");
         let recv = &mut session.windows.get_mut(&second).unwrap().resize_channel.1;

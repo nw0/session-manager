@@ -119,7 +119,7 @@ async fn event_loop<W: Write>(
                         _ => info!("unhandled event: {:?}", input),
                     }
                     manage_mode = false;
-                    session.redraw(tty_output);
+                    session.redraw(tty_output).unwrap();
                 }
                 else {
                     match input {
@@ -138,12 +138,12 @@ async fn event_loop<W: Write>(
                     info!("last pty exited");
                     return;
                 }
-                session.pty_update(pty_update.unwrap());
-                session.redraw(tty_output);
+                session.pty_update(pty_update.unwrap()).unwrap();
+                session.redraw(tty_output).unwrap();
             }
             _ = sigwinch_stream.next() => {
-                session.resize(util::get_term_size().unwrap());
-                session.redraw(tty_output);
+                session.resize(util::get_term_size().unwrap()).unwrap();
+                session.redraw(tty_output).unwrap();
             }
         }
     }

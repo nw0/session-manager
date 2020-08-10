@@ -15,6 +15,7 @@ log4rs = { version = "*", default-features = false, features = ["file_appender"]
 nix = "0.17"
 signal-hook = "0.1"
 termion = "1.5"
+thiserror = "1"
 
 [dependencies.vte]
 git = "https://github.com/nw0/vte"
