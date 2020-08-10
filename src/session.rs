@@ -250,6 +250,7 @@ mod tests {
     use futures::channel::mpsc::{self, Sender};
 
     pub struct MockWindow {
+        stdin_channel: (Sender<u8>, Receiver<u8>),
         pty_channel: (Sender<u8>, Receiver<u8>),
         resize_channel: (Sender<Winsize>, Receiver<Winsize>),
     }
@@ -257,10 +258,12 @@ mod tests {
     impl SessionWindow for MockWindow {
         fn new(_: &str, _: Winsize) -> Result<(MockWindow, Receiver<PtyUpdate>), ()> {
             let (_, recv) = mpsc::channel(10);
+            let stdin_channel = mpsc::channel(100);
             let pty_channel = mpsc::channel(10);
             let resize_channel = mpsc::channel(10);
             Ok((
                 MockWindow {
+                    stdin_channel,
                     pty_channel,
                     resize_channel,
                 },
@@ -268,7 +271,10 @@ mod tests {
             ))
         }
 
-        fn receive_stdin(&self, _: &[u8]) -> Result<(), io::Error> {
+        fn receive_stdin(&self, data: &[u8]) -> Result<(), io::Error> {
+            for byte in data {
+                self.stdin_channel.0.clone().try_send(*byte).unwrap();
+            }
             Ok(())
         }
 
@@ -389,6 +395,36 @@ mod tests {
             session.selected_window_idx(),
             "closed window not deselected"
         );
+    }
+
+    #[test]
+    fn session_forward_stdin() {
+        let mut session: Session<MockWindow> = Session::new(WINSZ);
+        let (first, _) = session.new_window().unwrap();
+        let (second, _) = session.new_window().unwrap();
+
+        session.select_window(second);
+        assert_eq!(session.selected_window_idx(), Some(second));
+        session.receive_stdin(b"Hello").unwrap();
+
+        let recv = &mut session.windows.get_mut(&first).unwrap().stdin_channel.1;
+        assert!(recv.try_next().is_err(), "other window received byte");
+        let recv = &mut session.windows.get_mut(&second).unwrap().stdin_channel.1;
+        for byte in b"Hello" {
+            assert_eq!(recv.try_next().unwrap(), Some(*byte), "failed to recv byte");
+        }
+        assert!(recv.try_next().is_err(), "recv too many bytes");
+
+        session.select_window(first);
+        session.receive_stdin(b"World").unwrap();
+
+        let recv = &mut session.windows.get_mut(&first).unwrap().stdin_channel.1;
+        for byte in b"World" {
+            assert_eq!(recv.try_next().unwrap(), Some(*byte), "failed to recv byte");
+        }
+        assert!(recv.try_next().is_err(), "recv too many bytes");
+        let recv = &mut session.windows.get_mut(&second).unwrap().stdin_channel.1;
+        assert!(recv.try_next().is_err(), "other window received byte");
     }
 
     #[test]
