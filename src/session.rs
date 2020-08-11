@@ -74,6 +74,7 @@ impl<W: SessionWindow> Session<W> {
                 let sz = self.size;
                 let window = self.selected_window_mut().expect("existed during match");
                 window.resize(sz);
+                window.mark_dirty();
                 Some(idx)
             }
             None => None,
@@ -186,6 +187,7 @@ where
     fn receive_stdin(&self, data: &[u8]) -> Result<(), io::Error>;
     fn pty_update(&mut self, byte: u8);
     fn resize(&mut self, sz: Winsize);
+    fn mark_dirty(&mut self);
     fn redraw<T: Write>(&mut self, output: &mut T);
 }
 
@@ -233,8 +235,12 @@ impl SessionWindow for Window {
             self.size = sz;
             self.grid.resize(sz.ws_col, sz.ws_row);
             self.pty.resize(sz).unwrap();
-            self.grid.mark_all_dirty();
+            self.mark_dirty();
         }
+    }
+
+    fn mark_dirty(&mut self) {
+        self.grid.mark_all_dirty();
     }
 
     fn redraw<T: Write>(&mut self, output: &mut T) {
@@ -253,6 +259,7 @@ mod tests {
         stdin_channel: (Sender<u8>, Receiver<u8>),
         pty_channel: (Sender<u8>, Receiver<u8>),
         resize_channel: (Sender<Winsize>, Receiver<Winsize>),
+        dirty_channel: (Sender<bool>, Receiver<bool>),
     }
 
     impl SessionWindow for MockWindow {
@@ -261,11 +268,13 @@ mod tests {
             let stdin_channel = mpsc::channel(100);
             let pty_channel = mpsc::channel(10);
             let resize_channel = mpsc::channel(10);
+            let dirty_channel = mpsc::channel(10);
             Ok((
                 MockWindow {
                     stdin_channel,
                     pty_channel,
                     resize_channel,
+                    dirty_channel,
                 },
                 recv,
             ))
@@ -283,8 +292,11 @@ mod tests {
         }
 
         fn resize(&mut self, size: Winsize) {
-            log::debug!("received resize");
             self.resize_channel.0.try_send(size).unwrap();
+        }
+
+        fn mark_dirty(&mut self) {
+            self.dirty_channel.0.try_send(true).unwrap();
         }
 
         fn redraw<T: Write>(&mut self, _: &mut T) {}
@@ -501,5 +513,30 @@ mod tests {
         assert!(recv.try_next().is_err(), "resized background window");
         let recv = &mut session.windows.get_mut(&second).unwrap().resize_channel.1;
         assert!(recv.try_next().is_ok(), "did not resize on selection");
+    }
+
+    #[test]
+    fn session_mark_dirty_on_select() {
+        let mut session: Session<MockWindow> = Session::new(WINSZ);
+        let (first, _) = session.new_window().unwrap();
+        let (second, _) = session.new_window().unwrap();
+
+        let recv = &mut session.windows.get_mut(&first).unwrap().dirty_channel.1;
+        assert!(recv.try_next().is_err(), "marked before selection");
+        let recv = &mut session.windows.get_mut(&second).unwrap().dirty_channel.1;
+        assert!(recv.try_next().is_err(), "marked before selection");
+
+        session.select_window(second);
+        assert_eq!(session.selected_window_idx(), Some(second));
+        let recv = &mut session.windows.get_mut(&first).unwrap().dirty_channel.1;
+        assert!(recv.try_next().is_err(), "unselected window marked");
+        let recv = &mut session.windows.get_mut(&second).unwrap().dirty_channel.1;
+        assert!(recv.try_next().is_ok(), "selected window not marked");
+
+        session.select_window(first);
+        let recv = &mut session.windows.get_mut(&first).unwrap().dirty_channel.1;
+        assert!(recv.try_next().is_ok(), "selected window not marked");
+        let recv = &mut session.windows.get_mut(&second).unwrap().dirty_channel.1;
+        assert!(recv.try_next().is_err(), "unselected window marked");
     }
 }
