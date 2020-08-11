@@ -3,12 +3,13 @@
 //! A would-be terminal multiplexer.
 #![recursion_limit = "1024"]
 
-use std::{fs::File, io::Write, thread};
+use std::{fs::File, io::Write, thread, time::Duration};
 
 use anyhow::Result;
 use futures::{
     channel::mpsc::{self, Receiver},
     executor,
+    future::FutureExt,
     stream::{SelectAll, StreamExt},
 };
 use log::{info, LevelFilter};
@@ -92,6 +93,10 @@ async fn event_loop<W: Write>(
     session.select_window(idx);
     let mut sigwinch_stream = sigwinch_stream();
     let mut manage_mode = false;
+    let mut redraw_timer = SelectAll::new();
+    redraw_timer
+        .push(futures_timer::Delay::new(Duration::from_millis(5)).into_stream());
+    let mut dirty = true;
 
     loop {
         futures::select! {
@@ -120,7 +125,7 @@ async fn event_loop<W: Write>(
                         _ => info!("unhandled event: {:?}", input),
                     }
                     manage_mode = false;
-                    session.redraw(tty_output).unwrap();
+                    dirty = true;
                 }
                 else {
                     match input {
@@ -140,21 +145,29 @@ async fn event_loop<W: Write>(
                     return;
                 }
                 session.pty_update(pty_update.unwrap()).unwrap();
-                match session.redraw(tty_output) {
-                    Ok(_) => (),
-                    Err(SessionError::NoSelectedWindow) => {
-                        write!(tty_output,
-                               "{}{}sm: last window closed. Exiting.\r\n",
-                               Goto(1, 1),
-                               clear::All
-                        ).unwrap();
-                    }
-                    _ => panic!("unhandled redraw error")
-                }
+                dirty = true;
             }
             _ = sigwinch_stream.next() => {
                 session.resize(util::get_term_size().unwrap()).unwrap();
-                session.redraw(tty_output).unwrap();
+                dirty = true;
+            }
+            _ = redraw_timer.next() => {
+                if dirty {
+                    match session.redraw(tty_output) {
+                        Ok(_) => (),
+                        Err(SessionError::NoSelectedWindow) => {
+                            write!(tty_output,
+                                   "{}{}sm: last window closed. Exiting.\r\n",
+                                   Goto(1, 1),
+                                   clear::All
+                            ).unwrap();
+                        }
+                        _ => panic!("unhandled redraw error")
+                    }
+                    tty_output.flush().unwrap();
+                    dirty = false;
+                }
+                redraw_timer.push(futures_timer::Delay::new(Duration::from_millis(5)).into_stream());
             }
         }
     }
