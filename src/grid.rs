@@ -13,8 +13,8 @@ use std::{
 use log::{debug, info, trace, warn};
 use termion::cursor::Goto;
 use vte::ansi::{
-    Attr, CharsetIndex, ClearMode, CursorStyle, Handler, LineClearMode, Mode, Rgb,
-    StandardCharset, TabulationClearMode,
+    Attr, CharsetIndex, ClearMode, Color, CursorStyle, Handler, LineClearMode, Mode,
+    NamedColor, Rgb, StandardCharset, TabulationClearMode,
 };
 
 enum Displace {
@@ -106,6 +106,7 @@ pub struct Grid<W> {
     height: u16,
     buffer: GridBuffer<Cell>,
     dirty_rows: BTreeSet<u16>,
+    sgr_template: Cell,
     _phantom: PhantomData<W>,
 }
 
@@ -121,6 +122,7 @@ impl<W: Write> Grid<W> {
             height,
             buffer: GridBuffer::new(width, height, Cell::default()),
             dirty_rows,
+            sgr_template: Cell::default(),
             _phantom: Default::default(),
         }
     }
@@ -280,7 +282,10 @@ impl<W: Write> Handler<W> for Grid<W> {
             self.scroll_up(1);
             self.cursor.row -= 1;
         }
-        self.cell_at_mut(self.cursor).c = c;
+        *self.cell_at_mut(self.cursor) = Cell {
+            c,
+            ..self.sgr_template
+        };
         self.cursor.col += 1;
         if self.cursor.col == self.width {
             self.cursor.row += 1;
@@ -539,8 +544,15 @@ impl<W: Write> Handler<W> for Grid<W> {
         }
     }
 
-    fn terminal_attribute(&mut self, _attr: Attr) {
+    fn terminal_attribute(&mut self, attr: Attr) {
         // TODO
+        // SGR: set an attribute to apply to subsequently-received characters.
+        match attr {
+            Attr::Reset => self.sgr_template = Cell::default(),
+            Attr::Foreground(color) => self.sgr_template.fg = color,
+            Attr::Background(color) => self.sgr_template.bg = color,
+            _ => debug!("unhandled SGR {:?}", attr),
+        }
     }
 
     fn set_mode(&mut self, mode: Mode) {
@@ -605,11 +617,17 @@ impl<W: Write> Handler<W> for Grid<W> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Cell {
     pub c: char,
+    pub bg: Color,
+    pub fg: Color,
 }
 
 impl Cell {
     pub fn default() -> Cell {
-        Cell { c: '.' }
+        Cell {
+            c: '.',
+            bg: Color::Named(NamedColor::Background),
+            fg: Color::Named(NamedColor::Foreground),
+        }
     }
 }
 
