@@ -645,6 +645,12 @@ mod tests {
         };
     }
 
+    macro_rules! check_cell {
+        ($grid:expr, $col:expr, $row:expr, $cell:expr) => {
+            assert_eq!($grid.buffer[CursorPos::at($col, $row)], $cell)
+        };
+    }
+
     macro_rules! check_char {
         ($grid:expr, $col:expr, $row:expr, $char:expr) => {
             assert_eq!($grid.buffer[CursorPos::at($col, $row)].c, $char)
@@ -890,5 +896,112 @@ mod tests {
         check_char!(grid, 1, 1, 'l');
         check_cur!(grid, 0, 2);
         assert_eq!(grid.height, 2);
+    }
+
+    #[test]
+    fn sgr_color() {
+        let mut grid = Grid::<Sink>::new(4, 3);
+        let blue = Color::Named(NamedColor::Blue);
+        let rgb = Color::Spec(Rgb {
+            r: 12,
+            g: 240,
+            b: 0,
+        });
+        input_str!(grid, "Hel");
+        check_cell!(
+            grid,
+            2,
+            0,
+            Cell {
+                c: 'l',
+                ..Cell::default()
+            }
+        );
+        grid.terminal_attribute(Attr::Reset);
+        input_str!(grid, "lo ");
+        check_cell!(
+            grid,
+            0,
+            1,
+            Cell {
+                c: 'o',
+                ..Cell::default()
+            }
+        );
+        grid.terminal_attribute(Attr::Foreground(blue));
+        input_str!(grid, "W");
+        check_cell!(
+            grid,
+            2,
+            1,
+            Cell {
+                c: 'W',
+                fg: blue,
+                ..Cell::default()
+            }
+        );
+        input_str!(grid, "o");
+        check_cell!(
+            grid,
+            3,
+            1,
+            Cell {
+                c: 'o',
+                fg: blue,
+                ..Cell::default()
+            }
+        );
+        grid.terminal_attribute(Attr::Background(rgb));
+        input_str!(grid, "rl");
+        check_cell!(
+            grid,
+            0,
+            2,
+            Cell {
+                c: 'r',
+                fg: blue,
+                bg: rgb
+            }
+        );
+        grid.terminal_attribute(Attr::Reset);
+        input_str!(grid, "d! ");
+        check_cell!(
+            grid,
+            0,
+            0,
+            Cell {
+                c: 'o',
+                ..Cell::default()
+            }
+        );
+        check_cell!(
+            grid,
+            2,
+            0,
+            Cell {
+                c: 'W',
+                fg: blue,
+                ..Cell::default()
+            }
+        );
+        check_cell!(
+            grid,
+            1,
+            1,
+            Cell {
+                c: 'l',
+                fg: blue,
+                bg: rgb
+            }
+        );
+        check_cell!(
+            grid,
+            0,
+            2,
+            Cell {
+                c: ' ',
+                ..Cell::default()
+            }
+        );
     }
 }
