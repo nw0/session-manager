@@ -104,10 +104,10 @@ where
                 pty_update = ptys_update.next() => {
                     if pty_update.is_none() {
                         info!("last pty exited");
-                        return;
+                    } else {
+                        self.session.pty_update(pty_update.unwrap()).unwrap();
+                        dirty = true;
                     }
-                    self.session.pty_update(pty_update.unwrap()).unwrap();
-                    dirty = true;
                 }
                 _ = self.resize.next() => {
                     self.session.resize(crate::util::get_term_size().unwrap()).unwrap();
@@ -123,6 +123,7 @@ where
                                        Goto(1, 1),
                                        clear::All
                                 ).unwrap();
+                                return;
                             }
                             _ => panic!("unhandled redraw error")
                         }
