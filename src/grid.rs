@@ -4,6 +4,7 @@ use std::{
     cmp::{max, min, Ord, Ordering, PartialOrd},
     collections::BTreeSet,
     convert::{TryFrom, TryInto},
+    fmt,
     io::Write,
     iter::Iterator,
     marker::PhantomData,
@@ -11,7 +12,10 @@ use std::{
 };
 
 use log::{debug, info, trace, warn};
-use termion::cursor::Goto;
+use termion::{
+    color::{self, Color as TermionColor},
+    cursor::Goto,
+};
 use vte::ansi::{
     Attr, CharsetIndex, ClearMode, Color, CursorStyle, Handler, LineClearMode, Mode,
     NamedColor, Rgb, StandardCharset, TabulationClearMode,
@@ -97,6 +101,69 @@ impl<C: Clone + Copy> IndexMut<CursorPos> for GridBuffer<C> {
     }
 }
 
+#[derive(Debug)]
+struct BoxColor(Color);
+
+impl BoxColor {
+    fn new(c: Color) -> BoxColor {
+        BoxColor(c)
+    }
+}
+
+impl TermionColor for BoxColor {
+    fn write_fg(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let tc = to_termion_color(self.0);
+        (*tc).write_fg(f)
+    }
+
+    fn write_bg(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let tc = to_termion_color(self.0);
+        (*tc).write_bg(f)
+    }
+}
+
+// Don't include this as it's basically processing an enum.
+#[cfg(not(tarpaulin_include))]
+fn to_termion_color(c: Color) -> Box<dyn TermionColor> {
+    use NamedColor::*;
+
+    match c {
+        Color::Named(n) => match n {
+            Cursor => Box::new(color::LightWhite),
+            Foreground => Box::new(color::LightWhite),
+            BrightForeground => Box::new(color::LightWhite),
+            DimForeground => Box::new(color::White),
+            Background => Box::new(color::Black),
+            Black => Box::new(color::Black),
+            Red => Box::new(color::Red),
+            Green => Box::new(color::Green),
+            Yellow => Box::new(color::Yellow),
+            Blue => Box::new(color::Blue),
+            Magenta => Box::new(color::Magenta),
+            Cyan => Box::new(color::Cyan),
+            White => Box::new(color::White),
+            DimBlack => Box::new(color::Black),
+            DimRed => Box::new(color::Red),
+            DimGreen => Box::new(color::Green),
+            DimYellow => Box::new(color::Yellow),
+            DimBlue => Box::new(color::Blue),
+            DimMagenta => Box::new(color::Magenta),
+            DimCyan => Box::new(color::Cyan),
+            DimWhite => Box::new(color::White),
+            BrightBlack => Box::new(color::LightBlack),
+            BrightRed => Box::new(color::LightRed),
+            BrightGreen => Box::new(color::LightGreen),
+            BrightYellow => Box::new(color::LightYellow),
+            BrightBlue => Box::new(color::LightBlue),
+            BrightMagenta => Box::new(color::LightMagenta),
+            BrightCyan => Box::new(color::LightCyan),
+            BrightWhite => Box::new(color::LightWhite),
+        },
+        Color::Spec(rgb) => Box::new(color::Rgb(rgb.r, rgb.g, rgb.b)),
+        Color::Indexed(i) => Box::new(color::AnsiValue(i)),
+    }
+}
+
 /// The display buffer of a console.
 pub struct Grid<W> {
     cursor: CursorPos,
@@ -137,17 +204,12 @@ impl<W: Write> Grid<W> {
     pub fn draw<T: Write>(&mut self, term: &mut T) {
         for row in self.dirty_rows.iter() {
             let start = CursorPos { row: *row, col: 0 };
-            write!(
-                term,
-                "{}{}",
-                Goto::from(start),
-                self.buffer.rows[*row as usize]
-                    .buf
-                    .iter()
-                    .map(|c| c.c)
-                    .collect::<String>()
-            )
-            .unwrap();
+            let row: String = self.buffer.rows[*row as usize]
+                .buf
+                .iter()
+                .map(|cell| format!("{}{}", color::Fg(BoxColor::new(cell.fg)), cell.c))
+                .collect();
+            write!(term, "{}{}", Goto::from(start), &row).unwrap();
         }
         write!(term, "{}", Goto::from(self.cursor)).unwrap();
         self.dirty_rows.clear();
