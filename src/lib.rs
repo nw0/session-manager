@@ -12,6 +12,7 @@ pub mod util {
 
     use nix::pty::Winsize;
 
+    #[cfg(not(test))]
     pub fn get_term_size() -> io::Result<Winsize> {
         let (cols, rows) = termion::terminal_size()?;
         Ok(Winsize {
@@ -20,6 +21,11 @@ pub mod util {
             ws_xpixel: 0,
             ws_ypixel: 0,
         })
+    }
+
+    #[cfg(test)]
+    pub fn get_term_size() -> io::Result<Winsize> {
+        Ok(crate::tests::WINSZ)
     }
 
     /// Return the path to the shell executable.

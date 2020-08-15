@@ -249,7 +249,7 @@ impl SessionWindow for Window {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::tests::WINSZ;
 
@@ -299,7 +299,10 @@ mod tests {
             self.dirty_channel.0.try_send(true).unwrap();
         }
 
-        fn redraw<T: Write>(&mut self, _: &mut T) {}
+        fn redraw<T: Write>(&mut self, file: &mut T) {
+            file.write(b"hello").unwrap();
+            file.flush().unwrap();
+        }
     }
 
     #[test]

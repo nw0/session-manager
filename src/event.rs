@@ -136,3 +136,57 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{session::tests::MockWindow, tests::WINSZ};
+
+    use std::{io::Read, thread};
+
+    use futures::{channel::mpsc, executor, stream};
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn no_immediate_redraw() {
+        let source = NamedTempFile::new().unwrap();
+        let mut sink = source.reopen().unwrap();
+        let mut buf = Vec::new();
+        let (mut send, recv) = mpsc::channel(10);
+        let session: Session<MockWindow> = Session::new(WINSZ);
+        let mut elp = EventLoop::new(
+            stream::pending::<(Event, Vec<u8>)>(),
+            recv,
+            source,
+            session,
+        );
+        thread::spawn(move || {
+            executor::block_on(elp.run());
+        });
+        let mut redraw_times = 0;
+
+        sink.read_to_end(&mut buf).unwrap();
+        assert_eq!(buf.len(), 0);
+
+        send.try_send(true).unwrap();
+        sink.read_to_end(&mut buf).unwrap();
+        if buf.len() != 0 {
+            redraw_times += 1;
+        }
+        buf.clear();
+        thread::sleep(Duration::from_millis(20));
+        send.try_send(true).unwrap();
+        sink.read_to_end(&mut buf).unwrap();
+        if buf.len() != 0 {
+            redraw_times += 1;
+        }
+        buf.clear();
+        // hopefully it doesn't somehow redraw while we're here
+        send.try_send(true).unwrap();
+        sink.read_to_end(&mut buf).unwrap();
+        if buf.len() != 0 {
+            redraw_times += 1;
+        }
+        assert_eq!(redraw_times, 1);
+    }
+}
