@@ -148,6 +148,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[test]
+    #[cfg(not(tarpaulin))] // timing issues
     fn no_immediate_redraw() {
         let source = NamedTempFile::new().unwrap();
         let mut sink = source.reopen().unwrap();
