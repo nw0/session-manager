@@ -13,7 +13,7 @@ futures-timer = "3"
 libc = "0.2"
 log = "*"
 log4rs = { version = "*", default-features = false, features = ["file_appender"] }
-nix = "0.17"
+nix = "0.20"
 signal-hook = "0.1"
 termion = "1.5"
 thiserror = "1"
