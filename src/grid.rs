@@ -16,7 +16,7 @@ use termion::{
     color::{self, Color as TermionColor},
     cursor::Goto,
 };
-use vte::ansi::{
+use crate::ansi::{
     Attr, CharsetIndex, ClearMode, Color, CursorStyle, Handler, LineClearMode, Mode,
     NamedColor, Rgb, StandardCharset, TabulationClearMode,
 };

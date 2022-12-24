@@ -23,8 +23,8 @@ use termion::{
 };
 
 use session_manager::{
-    event::EventLoop,
-    session::{Session, Window},
+    // event::EventLoop,
+    session::{Window},
     util,
 };
 

@@ -4,11 +4,12 @@ use std::{
     collections::BTreeMap,
     fs::File,
     io::{self, Write},
+    thread,
 };
 
 use anyhow::Result;
 use futures::{
-    channel::mpsc::Receiver,
+    channel::mpsc::{self, Receiver},
     stream::{Stream, StreamExt},
 };
 use log::debug;
@@ -22,159 +23,6 @@ use crate::{
     util,
 };
 
-/// A collection of `Window`s.
-pub struct Session<W: SessionWindow> {
-    next_window: usize,
-    selected_window: Option<usize>,
-    windows: BTreeMap<usize, W>,
-    size: Winsize,
-}
-
-impl<W: SessionWindow> Session<W> {
-    /// Construct a new `Session`.
-    pub fn new(size: Winsize) -> Session<W> {
-        Session {
-            next_window: 0,
-            selected_window: None,
-            windows: BTreeMap::new(),
-            size,
-        }
-    }
-
-    /// Initialise a new window within this `Session`.
-    pub fn new_window(
-        &mut self,
-    ) -> Result<(usize, impl Stream<Item = SessionPtyUpdate>)> {
-        let window_idx = self.next_window;
-        let (child, update) = W::new(&util::get_shell(), self.size).unwrap();
-        self.windows.insert(window_idx, child);
-        self.next_window += 1;
-        Ok((
-            window_idx,
-            update.map(move |data| SessionPtyUpdate { window_idx, data }),
-        ))
-    }
-
-    fn selected_window(&self) -> Result<&W, SessionError> {
-        self.selected_window
-            .ok_or(SessionError::NoSelectedWindow)
-            .and_then(move |idx| self.windows.get(&idx).ok_or(SessionError::WindowLost))
-    }
-
-    fn selected_window_mut(&mut self) -> Result<&mut W, SessionError> {
-        self.selected_window
-            .and_then(move |idx| self.windows.get_mut(&idx))
-            .ok_or(SessionError::NoSelectedWindow)
-    }
-
-    pub fn select_window(&mut self, idx: usize) -> Option<usize> {
-        match self.windows.get(&idx) {
-            Some(_) => {
-                self.selected_window = Some(idx);
-                let sz = self.size;
-                let window = self.selected_window_mut().expect("existed during match");
-                window.resize(sz);
-                window.mark_dirty();
-                Some(idx)
-            }
-            None => None,
-        }
-    }
-
-    pub fn selected_window_idx(&self) -> Option<usize> {
-        self.selected_window
-    }
-
-    /// Get index of next oldest window.
-    pub fn next_window_idx(&self) -> Option<usize> {
-        self.windows
-            .range((self.selected_window? + 1)..)
-            .next()
-            .map(|(idx, _)| *idx)
-    }
-
-    /// Get index of next older window.
-    pub fn prev_window_idx(&self) -> Option<usize> {
-        self.windows
-            .range(..self.selected_window?)
-            .next_back()
-            .map(|(idx, _)| *idx)
-    }
-
-    /// Get index of oldest window.
-    pub fn first_window_idx(&self) -> Option<usize> {
-        self.windows.keys().next().copied()
-    }
-
-    /// Get index of youngest window.
-    pub fn last_window_idx(&self) -> Option<usize> {
-        self.windows.keys().rev().next().copied()
-    }
-
-    /// Receive stdin for the active `Window`.
-    pub fn receive_stdin(&self, data: &[u8]) -> Result<(), SessionError> {
-        Ok(self.selected_window()?.receive_stdin(data)?)
-    }
-
-    /// Draw the selected `Window` to the given terminal.
-    pub fn redraw<T: Write>(&mut self, output: &mut T) -> Result<(), SessionError> {
-        self.selected_window_mut()?.redraw(output);
-        Ok(())
-    }
-
-    /// Update grid with PTY output.
-    pub fn pty_update(&mut self, update: SessionPtyUpdate) -> Result<(), SessionError> {
-        match update.data {
-            PtyUpdate::Exited => {
-                debug!("removed window {}", update.window_idx);
-                self.windows
-                    .remove(&update.window_idx)
-                    .ok_or(SessionError::WindowLost)?;
-                match self.next_window_idx().or_else(|| self.last_window_idx()) {
-                    Some(idx) => {
-                        self.select_window(idx);
-                    }
-                    None => self.selected_window = None,
-                }
-            }
-            PtyUpdate::Byte(byte) => {
-                let window = self
-                    .windows
-                    .get_mut(&update.window_idx)
-                    .ok_or(SessionError::WindowLost)?;
-                window.pty_update(byte);
-            }
-        }
-        Ok(())
-    }
-
-    /// Resize this session.
-    ///
-    /// Strategy: resize the active `Window`, and resize other `Window`s when they are
-    /// selected.
-    pub fn resize(&mut self, size: Winsize) -> Result<(), SessionError> {
-        self.size = size;
-        self.selected_window_mut()?.resize(size);
-        Ok(())
-    }
-}
-
-#[derive(Error, Debug)]
-pub enum SessionError {
-    #[error(transparent)]
-    Io(#[from] io::Error),
-    #[error("no selected window")]
-    NoSelectedWindow,
-    #[error("attempted to select missing window")]
-    WindowLost,
-}
-
-/// Session-specific PTY update tuple.
-pub struct SessionPtyUpdate {
-    window_idx: usize,
-    data: PtyUpdate,
-}
-
 /// A Window object for a `Session`.
 ///
 /// This trait exists to allow `Session` to handle different types of `Window`,
@@ -185,10 +33,9 @@ where
 {
     fn new(command: &str, size: Winsize) -> Result<(Self, Receiver<PtyUpdate>), ()>;
     fn receive_stdin(&self, data: &[u8]) -> Result<(), io::Error>;
-    fn pty_update(&mut self, byte: u8);
-    fn resize(&mut self, sz: Winsize);
-    fn mark_dirty(&mut self);
-    fn redraw<T: Write>(&mut self, output: &mut T);
+    // fn resize(&mut self, sz: Winsize);
+    // fn mark_dirty(&mut self);
+    // fn redraw<T: Write>(&mut self, output: &mut T);
 }
 
 /// Window: a `Console` abstraction.
@@ -198,7 +45,6 @@ where
 /// interface between the multiplexer and the `Console`.
 pub struct Window {
     pty: ChildPty,
-    grid: Grid<File>,
     processor: Processor,
     size: Winsize,
 }
@@ -206,11 +52,24 @@ pub struct Window {
 impl SessionWindow for Window {
     fn new(command: &str, size: Winsize) -> Result<(Window, Receiver<PtyUpdate>), ()> {
         let args: [&str; 0] = [];
-        let (pty, grid, pty_update) = console::spawn_pty(command, &args, size)?;
+        let (pty, mut grid) = console::spawn_pty(command, &args, size)?;
+        let mut processor = Processor::new();
+        let mut pty_output = pty.file.try_clone().unwrap();
+        let (mut send, pty_update) = mpsc::channel(0x100);
+        thread::spawn(move || {
+            use std::io::Read;
+            let mut buf = [0u8; 4096];
+            while let Ok(sz) = pty_output.read(&mut buf) {
+                for byte in &buf[..sz] {
+                    processor.advance(&mut grid, *byte, &mut pty_output);
+                }
+                send.try_send(PtyUpdate::Exited).unwrap();
+                send.disconnect();
+            }
+        });
         Ok((
             Window {
                 pty,
-                grid,
                 processor: Processor::new(),
                 size,
             },
@@ -225,27 +84,22 @@ impl SessionWindow for Window {
         Ok(())
     }
 
-    fn pty_update(&mut self, byte: u8) {
-        let mut reply = self.pty.file.try_clone().unwrap();
-        self.processor.advance(&mut self.grid, byte, &mut reply);
-    }
+    // fn resize(&mut self, sz: Winsize) {
+    //     if sz != self.size {
+    //         self.size = sz;
+    //         self.grid.resize(sz.ws_col, sz.ws_row);
+    //         self.pty.resize(sz).unwrap();
+    //         self.mark_dirty();
+    //     }
+    // }
 
-    fn resize(&mut self, sz: Winsize) {
-        if sz != self.size {
-            self.size = sz;
-            self.grid.resize(sz.ws_col, sz.ws_row);
-            self.pty.resize(sz).unwrap();
-            self.mark_dirty();
-        }
-    }
+    // fn mark_dirty(&mut self) {
+    //     self.grid.mark_all_dirty();
+    // }
 
-    fn mark_dirty(&mut self) {
-        self.grid.mark_all_dirty();
-    }
-
-    fn redraw<T: Write>(&mut self, output: &mut T) {
-        self.grid.draw(output);
-    }
+    // fn redraw<T: Write>(&mut self, output: &mut T) {
+    //     self.grid.draw(output);
+    // }
 }
 
 #[cfg(test)]

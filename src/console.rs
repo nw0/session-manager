@@ -31,24 +31,15 @@ pub fn spawn_pty<I, S>(
     command: &str,
     args: I,
     size: Winsize,
-) -> Result<(ChildPty, Grid<File>, Receiver<PtyUpdate>), ()>
+) -> Result<(ChildPty, Grid<File>), ()>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
     let child_pty = ChildPty::new(command, args, size)?;
-    let mut pty_output = child_pty.file.try_clone().unwrap().bytes();
-    let (mut send, pty_update) = mpsc::channel(0x1000);
-    thread::spawn(move || {
-        while let Some(Ok(byte)) = pty_output.next() {
-            executor::block_on(future::poll_fn(|cx| send.poll_ready(cx))).unwrap();
-            send.start_send(PtyUpdate::Byte(byte)).unwrap();
-        }
-        send.try_send(PtyUpdate::Exited).unwrap();
-        send.disconnect();
-    });
+    let mut pty_output = child_pty.file.try_clone().unwrap();
     let grid = Grid::new(size.ws_col, size.ws_row);
-    Ok((child_pty, grid, pty_update))
+    Ok((child_pty, grid))
 }
 
 /// An update from a PTY.

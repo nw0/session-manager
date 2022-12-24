@@ -3,7 +3,6 @@
 #![recursion_limit = "1024"]
 #[warn(missing_docs)]
 pub mod console;
-pub mod event;
 pub mod grid;
 pub mod session;
 
